@@ -1,9 +1,9 @@
 const std = @import("std");
-const px = @import("unicode_pixel.zig");
-const _ = @import("unicode_image.zig");
+const pix = @import("pixel.zig");
+const image = @import("image.zig");
 
 pub fn main() !void {
-    const pixel: px.UnicodePixel = .{
+    const pixel: pix.UnicodePixel = .{
         .br=0,
         .bg=16,
         .bb=255,
@@ -13,8 +13,8 @@ pub fn main() !void {
         .char=.{0,37,128},
     };
 
-    var pix_buf = [_]u8{undefined} ** px.WORD_SIZE;
-    _=px.getTemplateStringBuf(&pix_buf);
+    var pix_buf = [_]u8{undefined} ** pix.WORD_SIZE;
+    _=pix.getTemplateStringBuf(&pix_buf);
     _=pixel.print(&pix_buf);
 
     std.debug.print("{s}", .{pix_buf});
