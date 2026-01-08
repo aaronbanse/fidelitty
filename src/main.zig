@@ -15,20 +15,23 @@ pub fn main() !void {
 
     var im: image.UnicodeImage = undefined;
     const allocator = std.heap.page_allocator;
-    const dims = terminal.getSize();
+    const dims = terminal.getDims();
     try im.init(&allocator, dims.cols, dims.rows);
+    defer im.deinit(&allocator);
 
     var i: u16 = 0;
     var j: u16 = 0;
     while (j < dims.rows) : (j += 1) {
         i = 0;
         while (i < dims.cols) : (i += 1) {
-            try splat_pix.print(im.getPixel(i, j));
+            try im.writePixel(splat_pix, i, j);
         }
     }
 
-    const writer = std.fs.File.stdout();
-
-    try writer.writeAll(im.data);
+    _ = try std.posix.write(1, "\n\n");
+    i = 0;
+    while (i < 600) : (i+=1) {
+        _ = try std.posix.write(1, im.buf);
+    }
 }
 

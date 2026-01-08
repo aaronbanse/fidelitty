@@ -1,7 +1,9 @@
 const std = @import("std");
 const posix = std.posix;
+const mem = std.mem;
+const image = @import("image.zig");
 
-pub fn getSize() struct { cols: u16, rows: u16 } {
+pub fn getDims() struct { cols: u16, rows: u16 } {
     var wsz: posix.winsize = undefined;
     const rc = posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
 
