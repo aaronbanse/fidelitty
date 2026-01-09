@@ -10,20 +10,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // const vaxis = b.dependency("vaxis", .{
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-    // exe_mod.addImport("vaxis", vaxis.module("vaxis"));
-    //
-    // const vulkan = b.dependency("vulkan_zig", .{
-    //     .target = target,
-    //     .registry = b.path("vk.xml"),
-    // });
-    // exe_mod.addImport("vulkan", vulkan.module("vulkan-zig"));
-
     const exe = b.addExecutable(.{
-        .name = "fragmentty",
+        .name = "fidelitty",
         .root_module = exe_mod,
     });
 
