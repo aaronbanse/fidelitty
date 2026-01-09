@@ -24,21 +24,21 @@ pub const UnicodeImage = struct {
     height: u16,
     buf: []u8, // can be written directly
     
-    pub fn init(self: *UnicodeImage, alloc: *const mem.Allocator, w: u16, h: u16) !void {
+    pub fn init(self: *UnicodeImage, alloc: mem.Allocator, w: u16, h: u16) !void {
         self.buf = try alloc.alloc(u8, getSize(w, h));
         self.width = w;
         self.height = h;
         self.fillTemplate();
     }
 
-    pub fn reinit(self: *UnicodeImage, alloc: *const mem.Allocator, w: u16, h: u16) !void {
+    pub fn reinit(self: *UnicodeImage, alloc: mem.Allocator, w: u16, h: u16) !void {
         self.buf = try alloc.realloc(self.buf.len, getSize(w, h));
         self.width = w;
         self.height = h;
         self.fillTemplate();
     }
 
-    pub fn deinit(self: *UnicodeImage, alloc: *const mem.Allocator) void {
+    pub fn deinit(self: *UnicodeImage, alloc: mem.Allocator) void {
         self.width = 0;
         self.height = 0;
         alloc.free(self.buf);
@@ -46,12 +46,12 @@ pub const UnicodeImage = struct {
 
     pub fn writePixel(self: UnicodeImage, data: UnicodePixelData, x: u16, y: u16) !void {
         const pixel = self.buf[PREFIX.len + (@as(usize, y) * self.width + x) * PIXEL_STR_SIZE..];
-        _=fmt.printInt(pixel[7..], data.br, 10, fmt.Case.lower, .{.fill=48, .width=3});
-        _=fmt.printInt(pixel[11..], data.bg, 10, fmt.Case.lower, .{.fill=48, .width=3});
-        _=fmt.printInt(pixel[15..], data.bb, 10, fmt.Case.lower, .{.fill=48, .width=3});
-        _=fmt.printInt(pixel[26..], data.fr, 10, fmt.Case.lower, .{.fill=48, .width=3});
-        _=fmt.printInt(pixel[30..], data.fg, 10, fmt.Case.lower, .{.fill=48, .width=3});
-        _=fmt.printInt(pixel[34..], data.fb, 10, fmt.Case.lower, .{.fill=48, .width=3});
+        u8ToString(data.br, pixel[7..]);
+        u8ToString(data.bg, pixel[11..]);
+        u8ToString(data.bb, pixel[15..]);
+        u8ToString(data.fr, pixel[26..]);
+        u8ToString(data.fg, pixel[30..]);
+        u8ToString(data.fb, pixel[34..]);
         // encode utf8
         _ = try unicode.utf8Encode(@intCast(data.codepoint_hex), pixel[38..]);
     }
@@ -73,6 +73,25 @@ pub const UnicodeImage = struct {
 
     fn getSize(w: u16, h: u16) usize {
         return @as(usize, PREFIX.len + SUFFIX.len) + @as(usize, w) * h * PIXEL_STR_SIZE;
+    }
+
+    // Magic numbers for optimized division.
+    // Approximate 1/N as M/(2^k), so we can multiply by M and bit shift right by k.
+    const DIV_10_M: u16 = 205;
+    const DIV_10_SHIFT: u16 = 11;
+    const DIV_100_M: u16 = 41;
+    const DIV_100_SHIFT: u16 = 12;
+    // int to char conversion
+    const CHAR_0_OFFSET: u8 = 48;
+    // convert a u8 (0-255) to a 0-padded string of length 3
+    fn u8ToString(n: u8, buf: []u8) void {
+        const hundreds: u8 = @intCast((@as(u16, n) * DIV_100_M) >> DIV_100_SHIFT);
+        const mod_hundred: u8 = n - (hundreds * 100);
+        const tens: u8 = @intCast((@as(u16, mod_hundred) * DIV_10_M) >> DIV_10_SHIFT);
+        const ones: u8 = mod_hundred - (tens * 10);
+        buf[0] = hundreds + CHAR_0_OFFSET;
+        buf[1] = tens + CHAR_0_OFFSET;
+        buf[2] = ones + CHAR_0_OFFSET;
     }
 };
 

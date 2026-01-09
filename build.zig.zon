@@ -2,14 +2,14 @@
     .name = .fragmentty,
     .version = "0.15.2",
     .dependencies = .{
-        .vaxis = .{
-            .url = "git+https://github.com/rockorager/libvaxis.git#75035b169e91a51c233f3742161f8eb8eafca659",
-            .hash = "vaxis-0.5.1-BWNV_IE-CQBYmSf_boEKUyv6den0Gmj5LksxvdCx2pBL",
-        },
-        .vulkan_zig = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/1446b0b994c2362264cc24513d7c7ec31b469c50.tar.gz",
-            .hash = "vulkan-0.0.0-r7Ytx_VDAwAiMl0YSu2UOkVMIGJN7CeIQaxJR-hUSfD6",
-        },
+        // .vaxis = .{
+        //     .url = "git+https://github.com/rockorager/libvaxis.git#75035b169e91a51c233f3742161f8eb8eafca659",
+        //     .hash = "vaxis-0.5.1-BWNV_IE-CQBYmSf_boEKUyv6den0Gmj5LksxvdCx2pBL",
+        // },
+        // .vulkan_zig = .{
+        //     .url = "https://github.com/Snektron/vulkan-zig/archive/1446b0b994c2362264cc24513d7c7ec31b469c50.tar.gz",
+        //     .hash = "vulkan-0.0.0-r7Ytx_VDAwAiMl0YSu2UOkVMIGJN7CeIQaxJR-hUSfD6",
+        // },
     },
     .paths = .{""},
     .fingerprint = 0xbc45f433beed8e9e,
