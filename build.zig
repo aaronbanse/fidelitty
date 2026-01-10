@@ -15,8 +15,9 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
 
-    exe_mod.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
     exe_mod.addIncludePath(b.path("src/external/"));
+    exe_mod.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
+    exe_mod.addCSourceFile(.{.file=b.path("src/external/stb_image_impl.c")});
     exe.linkLibC();
     
     b.installArtifact(exe);

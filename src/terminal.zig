@@ -1,7 +1,5 @@
 const std = @import("std");
 const posix = std.posix;
-const mem = std.mem;
-const image = @import("image.zig");
 
 pub fn getDims() struct { cols: u16, rows: u16 } {
     var wsz: posix.winsize = undefined;

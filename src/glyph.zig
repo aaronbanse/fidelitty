@@ -6,27 +6,33 @@ const c = @cImport({
     @cInclude("stb_truetype.h");
 });
 
-pub fn GlyphBitmap(comptime w: u16, comptime h: u16) type {
+/// struct storing the positive and negative space pixmaps for a glyph
+pub fn GlyphPixmap(comptime w: u16, comptime h: u16) type {
     return struct {
-        buf: [w * h]u8,
+        pixmap_pos: [w * h]u8,
+        pixmap_neg: [w * h]u8,
         w: u16,
         h: u16,
 
-        pub fn generate(codepoint: u16, generator: *const BitmapGenerator) GlyphBitmap(w,h) {
-            var bitmap: GlyphBitmap(w,h) = .{
-                .buf = .{0} ** (w * h),
+        pub fn generate(codepoint: u16, generator: *const PixmapGenerator) GlyphPixmap(w,h) {
+            var pixmap: GlyphPixmap(w,h) = .{
+                .pixmap_pos = .{0} ** (w * h),
+                .pixmap_neg = .{0} ** (w * h),
                 .w = w,
                 .h = h,
             };
-            generator.generate(codepoint, w, h, &bitmap.buf);
-            return bitmap;
+            // get pos space pixmap from stb_truetype
+            generator.generate(codepoint, w, h, &pixmap.pos);
+            // calculate negative space pixmap
+            for (pixmap.pixmap_pos, 0..) |pix, i| {
+                pixmap.pixmap_neg[i] = @as(u8, 0xff) - pix;
+            }
+            return pixmap;
         }
 
-        pub fn print(self: GlyphBitmap(w,h)) void {
-            var y: u16 = 0;
-            while (y < h) : (y += 1) {
-                var x: u16 = 0;
-                while (x < w) : (x += 1) {
+        pub fn print(self: @This()) void {
+            for (0..h) |y| {
+                for (0..w) |x| {
                     if (self.buf[y * w + x] > 0) {
                         std.debug.print("\u{2588}", .{});
                     } else {
@@ -39,16 +45,16 @@ pub fn GlyphBitmap(comptime w: u16, comptime h: u16) type {
     };
 }
 
-pub const BitmapGenerator = struct {
+pub const PixmapGenerator = struct {
     font: c.stbtt_fontinfo,
     font_data: []u8, // font also contains this data, but we can free
     
     const MAX_FONT_FILE_SIZE = 10000000; // 10 mb
-    pub fn init(allocator: mem.Allocator, font_name: []const u8) !BitmapGenerator {
+    pub fn init(allocator: mem.Allocator, font_path: []const u8) !PixmapGenerator {
         // get font data
-        const font_dir: fs.Dir = try fs.openDirAbsolute("/usr/share/fonts/TTF", .{});
+        const font_dir: fs.Dir = try fs.openDirAbsolute("/usr/share/fonts", .{});
         const font_data = try font_dir.readFileAlloc(allocator, 
-            font_name, MAX_FONT_FILE_SIZE);
+            font_path, MAX_FONT_FILE_SIZE);
 
         // init font
         var font: c.stbtt_fontinfo = undefined;
@@ -62,15 +68,15 @@ pub const BitmapGenerator = struct {
         };
     }
 
-    pub fn deinit(self: BitmapGenerator, allocator: mem.Allocator) void {
+    pub fn deinit(self: PixmapGenerator, allocator: mem.Allocator) void {
         allocator.free(self.font_data);
     }
 
-    pub fn bufSize(self: BitmapGenerator) usize {
+    pub fn bufSize(self: PixmapGenerator) usize {
         return self.width * self.height;
     }
 
-    pub fn generate(self: BitmapGenerator, codepoint: u16, comptime w: u16, comptime h: u16, bitmap_buf: []u8) void {
+    pub fn generate(self: PixmapGenerator, codepoint: u16, comptime w: u16, comptime h: u16, pixmap_buf: []u8) void {
         const glyph = c.stbtt_FindGlyphIndex(&self.font, codepoint);
         const scale = c.stbtt_ScaleForPixelHeight(&self.font, @floatFromInt(h));
 
@@ -99,7 +105,7 @@ pub const BitmapGenerator = struct {
         if (clamped_w <= 0 or clamped_h <= 0) return;
 
         const offset: usize = @intCast(draw_y * w + draw_x);
-        c.stbtt_MakeGlyphBitmap(&self.font, bitmap_buf[offset..].ptr, clamped_w, clamped_h, w, scale, scale, glyph);
+        c.stbtt_MakeGlyphBitmap(&self.font, pixmap_buf[offset..].ptr, clamped_w, clamped_h, w, scale, scale, glyph);
     }
 };
 
