@@ -3,7 +3,7 @@ const std = @import("std");
 
 /// Data structure for storing a patch of an image, 
 /// for use in determining the optimal unicode character to represent it
-pub fn ImagePatch(comptime w: u8, comptime h: u8) type {
+pub fn ImagePatch(comptime w: u16, comptime h: u16) type {
     return struct {
         r: [w * h]u8 = undefined,
         g: [w * h]u8 = undefined,
@@ -42,13 +42,11 @@ pub fn ImagePatch(comptime w: u8, comptime h: u8) type {
 
         /// Render this patch to a UnicodeImage using full block character (U+2580)
         /// UnicodeImage must be the same dimensions as this patch (w×h)
-        pub fn render(self: @This(), uni_img: *unicode_image.UnicodeImage) !void {
-            std.debug.assert(uni_img.width == w and uni_img.height == h);
-            
+        pub fn render(self: @This(), uni_img: *unicode_image.UnicodeImage) void {
             for (0..h) |y| {
                 for (0..w) |x| {
                     const idx = y * w + x;
-                    try uni_img.writePixel(.{
+                    uni_img.writePixel(.{
                         .br = 0,
                         .bg = 0,
                         .bb = 0,
