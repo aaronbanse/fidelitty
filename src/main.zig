@@ -24,7 +24,7 @@ pub fn main() !void {
     var patch: image_patch.ImagePatch(patch_w, patch_h) = undefined;
     patch.sample(@ptrCast(image_raw), @intCast(img_w), @intCast(img_h), 2, 2, 0, 0);
 
-    try debug.renderImagePatch(patch_w, patch_h, &patch);
+    try debug.renderImagePatch(patch_w, patch_h, &patch, .{});
 }
 
 

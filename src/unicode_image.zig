@@ -79,6 +79,19 @@ pub const UnicodeImage = struct {
         };
     }
 
+    // convenience function for when you just want to write a pixel as a colored solid block
+    pub fn writePixelColor(self: @This(), r: u8, g: u8, b: u8, x: u16, y: u16) void {
+        self.writePixel(.{
+            .br = 0,
+            .bg = 0,
+            .bb = 0,
+            .fr = r,
+            .fg = g,
+            .fb = b,
+            .codepoint_hex = 0x2588, // full block
+        }, @intCast(x), @intCast(y));
+    }
+
     /// Fills a template for the image with it's size and position fixed.
     /// This consists of:
     /// 1. "begin sync" esc seq, telling terminal to print all out at once.

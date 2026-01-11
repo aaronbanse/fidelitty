@@ -39,25 +39,6 @@ pub fn ImagePatch(comptime w: u16, comptime h: u16) type {
                 }
             }
         }
-
-        /// Render this patch to a UnicodeImage using full block character (U+2580)
-        /// UnicodeImage must be the same dimensions as this patch (w×h)
-        pub fn render(self: @This(), uni_img: *unicode_image.UnicodeImage) void {
-            for (0..h) |y| {
-                for (0..w) |x| {
-                    const idx = y * w + x;
-                    uni_img.writePixel(.{
-                        .br = 0,
-                        .bg = 0,
-                        .bb = 0,
-                        .fr = self.r[idx],
-                        .fg = self.g[idx],
-                        .fb = self.b[idx],
-                        .codepoint_hex = 0x2588, // full block
-                    }, @intCast(x), @intCast(y));
-                }
-            }
-        }
     };
 }
 
