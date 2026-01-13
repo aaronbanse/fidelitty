@@ -3,7 +3,6 @@ zig-out/
 .img/
 *.o
 *.xml
-*.md
 *.txt
 *.sh
 
