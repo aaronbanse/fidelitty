@@ -39,15 +39,20 @@ pub fn getCursorPos() !struct { row: u16, col: u16 } {
     return .{ .row = row-1, .col = col-1 }; // convert back to 0-indexed
 }
 
-pub fn getDims() struct { cols: u16, rows: u16 } {
+pub fn getDims() struct { cols: u16, rows: u16, cell_w: u16, cell_h: u16 } {
     var wsz: posix.winsize = undefined;
     const rc = posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
 
     if (rc != 0) {
         std.debug.print("Error: ioctl failed with code {}", .{rc});
-        return .{ .cols = 0, .rows = 0 };
+        return .{ .cols = 0, .rows = 0, .cell_w = 0, .cell_h = 0 };
     }
 
-    return .{ .cols = wsz.col, .rows = wsz.row };
+    return .{
+        .cols = wsz.col,
+        .rows = wsz.row,
+        .cell_w = wsz.xpixel / wsz.col,
+        .cell_h = wsz.ypixel / wsz.row,
+    };
 }
 

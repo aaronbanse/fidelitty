@@ -19,26 +19,44 @@ pub fn main() !void {
     var img_w: u32 = undefined;
     var img_h: u32 = undefined;
     var img_chan_n: u32 = undefined;
-    const image_raw: *u8 = c.stbi_load("/home/acbanse/Projects/fidelitty/.img/IMG_3706.JPEG", @ptrCast(&img_w), @ptrCast(&img_h), @ptrCast(&img_chan_n), 3);
+    const image_raw: [*]u8 = c.stbi_load("/home/acbanse/Projects/fidelitty/.img/IMG_3706.JPEG", @ptrCast(&img_w), @ptrCast(&img_h), @ptrCast(&img_chan_n), 3);
     defer c.stbi_image_free(image_raw);
-    
+
+    // TEMP: will delete----------
+    const image_flipped: []u8 = try allocator.alloc(u8, img_w * img_h * 3);
+    defer allocator.free(image_flipped);
+    for (0..img_h) |y| {
+        for (0..img_w) |x| {
+            for (0..3) |chan| {
+                const idx = img_w * y + x;
+                const idx_flipped = (img_w * img_h) - idx - 1;
+                image_flipped[idx*3 + chan] = image_raw[idx_flipped*3 + chan];
+            }
+        }
+    }
+    // END TEMP-------------------
+
     // setup dimensions
     const term_dims = terminal.getDims();
+    std.debug.print("{},{},{},{}\n", .{term_dims.cols, term_dims.rows, term_dims.cell_w, term_dims.cell_h});
     const w = 4; // patch width
     const h = 4; // patch height
+    const out_image_h: u16 = term_dims.rows;
+    const out_image_w: u16 = @intFromFloat(@as(f32, @floatFromInt(term_dims.rows * term_dims.cell_h)) // new_h
+        * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.cell_w))); // old_w / old_h
 
     // init output image
     var out_image: unicode_image.UnicodeImage = undefined;
-    try out_image.init(allocator, 0, 0, term_dims.cols, term_dims.rows);
+    try out_image.init(allocator, 0, 0, out_image_w, out_image_h);
     defer out_image.deinit(allocator);
 
     // sample patches
-    var patches: []image_patch.ImagePatch(w,h) = try allocator.alloc(image_patch.ImagePatch(w,h), term_dims.cols * term_dims.rows);
+    var patches: []image_patch.ImagePatch(w,h) = try allocator.alloc(image_patch.ImagePatch(w,h), out_image_w * out_image_h);
     defer allocator.free(patches);
-    for (0..term_dims.rows) |y| {
-        for (0..term_dims.cols) |x| {
-            patches[y * term_dims.cols + x].sample(@ptrCast(image_raw), @intCast(img_w), @intCast(img_h),
-                term_dims.cols, term_dims.rows, @intCast(x), @intCast(y));
+    for (0..out_image_h) |y| {
+        for (0..out_image_w) |x| {
+            patches[y * out_image_w + x].sample(@ptrCast(image_flipped), @intCast(img_w), @intCast(img_h),
+                out_image_w, out_image_h, @intCast(x), @intCast(y));
         }
     }
 
@@ -67,9 +85,9 @@ pub fn main() !void {
         solvers[n] = algo.glyphColorSolver(w, h, glyphs[n]);
     }
         // write pixels to image
-    for (0..term_dims.rows) |y| {
-        for (0..term_dims.cols) |x| {
-            const pixel = algo.computePixel(w, h, patches[y * term_dims.cols + x], &codepoints, glyphs, &solvers);
+    for (0..out_image_h) |y| {
+        for (0..out_image_w) |x| {
+            const pixel = algo.computePixel(w, h, patches[y * out_image_w + x], &codepoints, glyphs, &solvers);
             out_image.writePixel(pixel, @intCast(x), @intCast(y));
         }
     }
