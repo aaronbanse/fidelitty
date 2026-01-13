@@ -22,7 +22,7 @@ pub fn build(b: *std.Build) void {
 
     const vulkan = b.dependency("vulkan_zig", .{
         .target = target,
-        .registry = b.path("vk.xml"),
+        .registry = b.path("src/external/vk.xml"),
     });
     exe_mod.addImport("vulkan", vulkan.module("vulkan-zig"));
     
