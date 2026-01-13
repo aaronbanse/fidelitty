@@ -19,6 +19,12 @@ pub fn build(b: *std.Build) void {
     exe_mod.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
     exe_mod.addCSourceFile(.{.file=b.path("src/external/stb_image_impl.c")});
     exe.linkLibC();
+
+    const vulkan = b.dependency("vulkan_zig", .{
+        .target = target,
+        .registry = b.path("vk.xml"),
+    });
+    exe_mod.addImport("vulkan", vulkan.module("vulkan-zig"));
     
     b.installArtifact(exe);
 
