@@ -10,7 +10,7 @@ const c = @cImport({
 pub fn getGlyphPixmapSet(
     comptime w: u8,
     comptime h: u8,
-    codepoints: []u16,
+    codepoints: []u32,
     generator: *const PixmapGenerator,
     allocator: mem.Allocator
 ) ![]GlyphPixmap(w, h) {
@@ -47,7 +47,7 @@ pub fn GlyphPixmap(comptime w: u16, comptime h: u16) type {
         pixmap_pos: @Vector(w*h, f32) = @splat(0),
         pixmap_neg: @Vector(w*h, f32) = @splat(0),
 
-        pub fn generate(self: *@This(), codepoint: u16, generator: *const PixmapGenerator) void {
+        pub fn generate(self: *@This(), codepoint: u32, generator: *const PixmapGenerator) void {
             generator.generateScaled(codepoint, w, h, &self.pixmap_pos);
             self.pixmap_neg = @as(@Vector(w*h, f32), @splat(1.0)) - self.pixmap_pos;
         }
@@ -80,7 +80,7 @@ pub const PixmapGenerator = struct {
         allocator.free(self.font_data);
     }
 
-    pub fn generateScaled(self: PixmapGenerator, codepoint: u16, comptime w: u16, comptime h: u16, pixmap_buf: *[w * h]f32) void {
+    pub fn generateScaled(self: PixmapGenerator, codepoint: u32, comptime w: u16, comptime h: u16, pixmap_buf: *[w * h]f32) void {
         const virtual_w: u16 = w * SUPERSAMPLE;
         const virtual_h: u16 = @intFromFloat(@as(f32, @floatFromInt(w)) * self.cell_aspect * @as(f32, SUPERSAMPLE));
 
@@ -117,8 +117,9 @@ pub const PixmapGenerator = struct {
         }
     }
 
-    fn renderToBuffer(self: PixmapGenerator, codepoint: u16, buf_w: u16, buf_h: u16, buf: []u8) void {
-        const glyph_idx = c.stbtt_FindGlyphIndex(&self.font, codepoint);
+    fn renderToBuffer(self: PixmapGenerator, codepoint: u32, buf_w: u16, buf_h: u16, buf: []u8) void {
+        std.debug.assert(codepoint < std.math.maxInt(c_int));
+        const glyph_idx = c.stbtt_FindGlyphIndex(&self.font, @intCast(codepoint));
         if (glyph_idx == 0) return;
 
         var ascent: c_int = undefined;

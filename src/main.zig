@@ -38,7 +38,6 @@ pub fn main() !void {
 
     // setup dimensions
     const term_dims = terminal.getDims();
-    std.debug.print("{},{},{},{}\n", .{term_dims.cols, term_dims.rows, term_dims.cell_w, term_dims.cell_h});
     const w = 4; // patch width
     const h = 4; // patch height
     const out_image_h: u16 = term_dims.rows;
@@ -55,14 +54,14 @@ pub fn main() !void {
     defer allocator.free(patches);
     for (0..out_image_h) |y| {
         for (0..out_image_w) |x| {
-            patches[y * out_image_w + x].sample(@ptrCast(image_flipped), @intCast(img_w), @intCast(img_h),
+            patches[y * out_image_w + x].sample(image_flipped, @intCast(img_w), @intCast(img_h),
                 out_image_w, out_image_h, @intCast(x), @intCast(y));
         }
     }
 
     // get codepoints
     const u8_vals: u16 = std.math.maxInt(u8) + 1; // num vals u8 can take
-    var codepoints: [u8_vals*2]u16 = undefined;
+    var codepoints: [u8_vals*2]u32 = undefined;
     for (0..u8_vals) |n| {
         codepoints[n] = 0x2800 + @as(u16, @intCast(n));
         if (n == 0x91 or n == 0x92 or n == 0x93) {

@@ -24,7 +24,7 @@ pub fn computePixel(
     comptime w: u8,
     comptime h: u8,
     patch: image_patch.ImagePatch(w, h),
-    codepoints: []u16,
+    codepoints: []u32,
     glyphs: []glyph.GlyphPixmap(w, h),
     glyph_color_solvers: []GlyphColorSolver(w, h)
 ) unicode_image.UnicodePixelData {

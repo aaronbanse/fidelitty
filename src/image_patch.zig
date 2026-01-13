@@ -11,7 +11,7 @@ pub fn ImagePatch(comptime w: u8, comptime h: u8) type {
 
         /// Sample a patch from an image. For performance, uses strided sampling instead of bucketed.
         /// Assumes image is arranged row-major with r,g,b interleaved. So would look like r,g,b,r,g,b etc
-        pub fn sample(self: *@This(), image: [*]const u8, im_w: u16, im_h: u16, uni_im_w: u16, uni_im_h: u16, patch_x: u16, patch_y: u16) void {
+        pub fn sample(self: *@This(), image: []const u8, im_w: u16, im_h: u16, uni_im_w: u16, uni_im_h: u16, patch_x: u16, patch_y: u16) void {
             // Calculate the pixel region this patch covers
             // Use integer math to handle non-divisible sizes
             const start_x: u16 = @intCast((@as(u32, patch_x) * im_w) / uni_im_w);
