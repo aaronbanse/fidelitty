@@ -7,8 +7,13 @@ const c = @cImport({
     @cInclude("stb_truetype.h");
 });
 
-pub fn getGlyphPixmapSet(codepoints: []u16, comptime w: u8, comptime h: u8,
-                         generator: *const PixmapGenerator, allocator: mem.Allocator) ![]GlyphPixmap(w, h) {
+pub fn getGlyphPixmapSet(
+    comptime w: u8,
+    comptime h: u8,
+    codepoints: []u16,
+    generator: *const PixmapGenerator,
+    allocator: mem.Allocator
+) ![]GlyphPixmap(w, h) {
     const pixmap_set: []GlyphPixmap(w, h) = try allocator.alloc(GlyphPixmap(w, h), codepoints.len);
     for (codepoints, 0..) |codepoint, i| {
         pixmap_set[i].generate(codepoint, generator);
@@ -39,29 +44,12 @@ pub fn getCellAspectOrDefault() f32 {
 
 pub fn GlyphPixmap(comptime w: u16, comptime h: u16) type {
     return struct {
-        pixmap_pos: [w * h]u8,
-        pixmap_neg: [w * h]u8,
+        pixmap_pos: @Vector(w*h, f32) = @splat(0),
+        pixmap_neg: @Vector(w*h, f32) = @splat(0),
 
         pub fn generate(self: *@This(), codepoint: u16, generator: *const PixmapGenerator) void {
-            self.pixmap_pos = .{0} ** (w * h);
             generator.generateScaled(codepoint, w, h, &self.pixmap_pos);
-            for (self.pixmap_pos, 0..) |pix, i| {
-                self.pixmap_neg[i] = @as(u8, 0xff) - pix;
-            }
-        }
-
-        pub fn print(self: @This()) void {
-            for (0..h) |y| {
-                for (0..w) |x| {
-                    const val = self.pixmap_pos[y * w + x];
-                    if (val > 0) {
-                        std.debug.print("\x1b[38;2;{};{};{}m\u{2588}", .{val, val, val});
-                    } else {
-                        std.debug.print(".", .{});
-                    }
-                }
-                std.debug.print("\n", .{});
-            }
+            self.pixmap_neg = @as(@Vector(w*h, f32), @splat(1.0)) - self.pixmap_pos;
         }
     };
 }
@@ -92,7 +80,7 @@ pub const PixmapGenerator = struct {
         allocator.free(self.font_data);
     }
 
-    pub fn generateScaled(self: PixmapGenerator, codepoint: u16, comptime w: u16, comptime h: u16, pixmap_buf: *[w * h]u8) void {
+    pub fn generateScaled(self: PixmapGenerator, codepoint: u16, comptime w: u16, comptime h: u16, pixmap_buf: *[w * h]f32) void {
         const virtual_w: u16 = w * SUPERSAMPLE;
         const virtual_h: u16 = @intFromFloat(@as(f32, @floatFromInt(w)) * self.cell_aspect * @as(f32, SUPERSAMPLE));
 
@@ -121,10 +109,10 @@ pub const PixmapGenerator = struct {
                 const start_y = out_y * region_h;
                 for (0..region_h) |dy| {
                     for (0..region_w) |dx| {
-                        sum += temp_buf[(start_y + dy) * virtual_w + (start_x + dx)];
+                        sum += if (temp_buf[(start_y + dy) * virtual_w + (start_x + dx)] > 0) 255 else 0;
                     }
                 }
-                pixmap_buf[out_y * w + out_x] = @intCast(sum / (region_w * region_h));
+                pixmap_buf[out_y * w + out_x] = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(region_w * region_h)) / 255;
             }
         }
     }
@@ -143,12 +131,25 @@ pub const PixmapGenerator = struct {
         c.stbtt_GetGlyphHMetrics(&self.font, glyph_idx, &advance_width, &left_bearing);
 
         const font_height = ascent - descent;
-        const scale_y = @as(f32, @floatFromInt(buf_h)) / @as(f32, @floatFromInt(font_height));
-        const scaled_advance = @as(f32, @floatFromInt(advance_width)) * scale_y;
-        const scale_x = if (scaled_advance > @as(f32, @floatFromInt(buf_w)))
-            @as(f32, @floatFromInt(buf_w)) / @as(f32, @floatFromInt(advance_width))
-        else
-            scale_y;
+
+        const is_box_drawing = (codepoint >= 0x2500 and codepoint <= 0x259F);
+
+        var scale_x: f32 = undefined;
+        var scale_y: f32 = undefined;
+        if (is_box_drawing) {
+            scale_y = @as(f32, @floatFromInt(buf_h)) / @as(f32, @floatFromInt(font_height));
+            scale_x = @as(f32, @floatFromInt(buf_w)) / @as(f32, @floatFromInt(advance_width));
+        } else {
+            // Normal glyphs: uniform scaling based on cell height
+            scale_y = @as(f32, @floatFromInt(buf_h)) / @as(f32, @floatFromInt(font_height));
+            scale_x = scale_y; // Keep aspect ratio
+        }
+        // const scale_y = @as(f32, @floatFromInt(buf_h)) / @as(f32, @floatFromInt(font_height));
+        // const scaled_advance = @as(f32, @floatFromInt(advance_width)) * scale_y;
+        // const scale_x = if (scaled_advance > @as(f32, @floatFromInt(buf_w)))
+        //     @as(f32, @floatFromInt(buf_w)) / @as(f32, @floatFromInt(advance_width))
+        // else
+        //     scale_y;
 
         var x0: c_int = undefined;
         var y0: c_int = undefined;

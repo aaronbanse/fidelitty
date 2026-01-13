@@ -5,4 +5,5 @@ zig-out/
 *.xml
 *.md
 *.txt
+*.sh
 
