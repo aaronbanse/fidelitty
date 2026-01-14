@@ -1,7 +1,11 @@
 const std = @import("std");
-const unicode_image = @import("unicode_image.zig");
-const image_patch = @import("image_patch.zig");
-const terminal = @import("terminal.zig");
+const heap = std.heap;
+const ascii = std.ascii;
+const posix = std.posix;
+
+const uni_im = @import("unicode_image.zig");
+const patch = @import("image_patch.zig");
+const term = @import("terminal_util.zig");
 const glyph = @import("glyph.zig");
 
 pub const Options = struct {
@@ -10,15 +14,15 @@ pub const Options = struct {
     pub const Appearance = enum { normal, escaped };
 };
 
-pub fn renderImagePatch(comptime w: u8, comptime h: u8, im: image_patch.ImagePatch(w, h), options: Options) !void {
+pub fn renderImagePatch(comptime w: u8, comptime h: u8, p: patch.ImagePatch(w, h), options: Options) !void {
     const Closure = struct {
-        im: image_patch.ImagePatch(w, h),
+        p: patch.ImagePatch(w, h),
         fn get_colors(self: @This(), x: u16, y: u16) struct {r: u8, g: u8, b: u8} {
             const idx = y * w + x;
-            return .{ .r = self.im.r[idx], .g = self.im.g[idx], .b = self.im.b[idx] };
+            return .{ .r = self.p.r[idx], .g = self.p.g[idx], .b = self.p.b[idx] };
         }
     };
-    try renderGeneric(w, h, Closure{ .im = im }, options);
+    try renderGeneric(w, h, Closure{ .p = p }, options);
 }
 
 pub fn renderVectorsRGB(comptime w: u8, comptime h: u8, r: @Vector(w*h, u8), g: @Vector(w*h, u8), b: @Vector(w*h, u8), options: Options) !void {
@@ -45,7 +49,7 @@ pub fn renderVector(comptime w: u8, comptime h: u8, vec: @Vector(w*h, u8), optio
     try renderGeneric(w, h, Closure{ .vec = vec }, options);
 }
 
-pub fn renderGlyphPixmap(comptime w: u8, comptime h: u8, pixmap: glyph.GlyphPixmap(w, h), options: Options) !void {
+pub fn renderGlyphMask(comptime w: u8, comptime h: u8, pixmap: glyph.GlyphMask(w, h), options: Options) !void {
     const Closure = struct {
         pos_map: @Vector(w*h, u8),
         fn get_colors(self: @This(), x: u16, y: u16) struct {r: u8, g: u8, b: u8} {
@@ -53,18 +57,18 @@ pub fn renderGlyphPixmap(comptime w: u8, comptime h: u8, pixmap: glyph.GlyphPixm
             return .{ .r = self.pos_map[idx], .g = self.pos_map[idx], .b = self.pos_map[idx] };
         }
     };
-    try renderGeneric(w, h, Closure{ .pos_map = @intFromFloat(@as(@Vector(w*h, f32), @splat(255)) * pixmap.pixmap_pos) }, options);
+    try renderGeneric(w, h, Closure{ .pos_map = @intFromFloat(@as(@Vector(w*h, f32), @splat(255)) * pixmap.pos) }, options);
 }
 
 fn renderGeneric(w: u8, h: u8, get_color_closure: anytype, options: Options) !void {
     // init allocator
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    var debug_allocator: heap.DebugAllocator(.{}) = .init;
     const alloc = debug_allocator.allocator();
     defer _ = debug_allocator.deinit();
 
     // init out image
-    var out_image: unicode_image.UnicodeImage = undefined;
-    const cursor_pos = try terminal.getCursorPos();
+    var out_image: uni_im.UnicodeImage = undefined;
+    const cursor_pos = try term.getCursorPos();
     try out_image.init(alloc, cursor_pos.col, cursor_pos.row, w, h);
     defer out_image.deinit(alloc);
 
@@ -78,9 +82,9 @@ fn renderGeneric(w: u8, h: u8, get_color_closure: anytype, options: Options) !vo
 
     // print normally or escaped to view internals
     if (options.appearance == .escaped) {
-        std.debug.print("{f}", .{std.ascii.hexEscape(out_image.buf, .lower)});
+        std.debug.print("{f}", .{ascii.hexEscape(out_image.buf, .lower)});
     } else if (options.appearance == .normal) {
-        _ = try std.posix.write(1, out_image.buf);
+        _ = try posix.write(1, out_image.buf);
     }
     std.debug.print("\n\n", .{});
 }

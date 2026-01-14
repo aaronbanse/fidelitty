@@ -27,7 +27,7 @@ pub const UnicodePixelData = struct {
     fr: u8,
     fg: u8,
     fb: u8,
-    codepoint_hex: u32,
+    codepoint: u32,
 };
 
 pub const UnicodeImage = struct {
@@ -74,7 +74,7 @@ pub const UnicodeImage = struct {
         u8ToString(data.fb, self.buf[pix_index + 34..]);
 
         // encode utf8
-        _ = unicode.utf8Encode(@intCast(data.codepoint_hex), self.buf[pix_index+38..]) catch {
+        _ = unicode.utf8Encode(@intCast(data.codepoint), self.buf[pix_index+38..]) catch {
             self.buf[pix_index+38] = 48;// 0
         };
     }
@@ -88,7 +88,7 @@ pub const UnicodeImage = struct {
             .fr = r,
             .fg = g,
             .fb = b,
-            .codepoint_hex = 0x2588, // full block
+            .codepoint = 0x2588, // full block
         }, @intCast(x), @intCast(y));
     }
 

@@ -1,17 +1,21 @@
 const std = @import("std");
-const image_patch = @import("image_patch.zig");
+const math = std.math;
+const posix = std.posix;
+const heap = std.heap;
+
+const patch = @import("image_patch.zig");
 const debug = @import("debug.zig");
 const glyph = @import("glyph.zig");
 const algo = @import("algo.zig");
-const unicode_image = @import("unicode_image.zig");
-const terminal = @import("terminal.zig");
+const uni_im = @import("unicode_image.zig");
+const term = @import("terminal_util.zig");
 
 const c = @cImport({
     @cInclude("stb_image.h");
 });
 
 pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+    var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
@@ -37,7 +41,7 @@ pub fn main() !void {
     // END TEMP-------------------
 
     // setup dimensions
-    const term_dims = terminal.getDims();
+    const term_dims = term.getDims();
     const w = 4; // patch width
     const h = 4; // patch height
     const out_image_h: u16 = term_dims.rows;
@@ -45,12 +49,12 @@ pub fn main() !void {
         * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.cell_w))); // old_w / old_h
 
     // init output image
-    var out_image: unicode_image.UnicodeImage = undefined;
+    var out_image: uni_im.UnicodeImage = undefined;
     try out_image.init(allocator, 0, 0, out_image_w, out_image_h);
     defer out_image.deinit(allocator);
 
     // sample patches
-    var patches: []image_patch.ImagePatch(w,h) = try allocator.alloc(image_patch.ImagePatch(w,h), out_image_w * out_image_h);
+    var patches: []patch.ImagePatch(w,h) = try allocator.alloc(patch.ImagePatch(w,h), out_image_w * out_image_h);
     defer allocator.free(patches);
     for (0..out_image_h) |y| {
         for (0..out_image_w) |x| {
@@ -60,7 +64,7 @@ pub fn main() !void {
     }
 
     // get codepoints
-    const u8_vals: u16 = std.math.maxInt(u8) + 1; // num vals u8 can take
+    const u8_vals: u16 = math.maxInt(u8) + 1; // num vals u8 can take
     var codepoints: [u8_vals*2]u32 = undefined;
     for (0..u8_vals) |n| {
         codepoints[n] = 0x2800 + @as(u16, @intCast(n));
@@ -72,10 +76,10 @@ pub fn main() !void {
     }
 
     // get pixmaps
-    const pixmap_generator: glyph.PixmapGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
-    defer pixmap_generator.deinit(allocator);
+    const glyph_mask_generator: glyph.GlyphMaskGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
+    defer glyph_mask_generator.deinit(allocator);
 
-    const glyphs = try glyph.getGlyphPixmapSet(w, h, &codepoints, &pixmap_generator, allocator);
+    const glyphs = try glyph.getGlyphMaskSet(w, h, &codepoints, &glyph_mask_generator, allocator);
     defer allocator.free(glyphs);
 
     // precompute glyph color solvers
@@ -83,7 +87,8 @@ pub fn main() !void {
     for (0..codepoints.len) |n| {
         solvers[n] = algo.glyphColorSolver(w, h, glyphs[n]);
     }
-        // write pixels to image
+
+    // write pixels to image
     for (0..out_image_h) |y| {
         for (0..out_image_w) |x| {
             const pixel = algo.computePixel(w, h, patches[y * out_image_w + x], &codepoints, glyphs, &solvers);
@@ -91,6 +96,6 @@ pub fn main() !void {
         }
     }
 
-    _ = try std.posix.write(1, out_image.buf);
+    _ = try posix.write(1, out_image.buf);
 }
 

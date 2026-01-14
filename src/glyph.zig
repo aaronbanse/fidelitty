@@ -1,60 +1,44 @@
 const std = @import("std");
-const posix = std.posix;
 const mem = std.mem;
 const fs = std.fs;
+const heap = std.heap;
+const math = std.math;
+
+const term = @import("terminal_util.zig");
 
 const c = @cImport({
     @cInclude("stb_truetype.h");
 });
 
-pub fn getGlyphPixmapSet(
+// Set of glyph masks. Looped over to compute best glyph for a given patch.
+pub fn getGlyphMaskSet(
     comptime w: u8,
     comptime h: u8,
     codepoints: []u32,
-    generator: *const PixmapGenerator,
+    generator: *const GlyphMaskGenerator,
     allocator: mem.Allocator
-) ![]GlyphPixmap(w, h) {
-    const pixmap_set: []GlyphPixmap(w, h) = try allocator.alloc(GlyphPixmap(w, h), codepoints.len);
+) ![]GlyphMask(w, h) {
+    const set: []GlyphMask(w, h) = try allocator.alloc(GlyphMask(w, h), codepoints.len);
     for (codepoints, 0..) |codepoint, i| {
-        pixmap_set[i].generate(codepoint, generator);
+        try set[i].generate(codepoint, generator);
     }
-    return pixmap_set;
+    return set;
 }
 
-pub fn getCellAspect() ?f32 {
-    var wsz: posix.winsize = undefined;
-    const rc = posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
-    if (rc != 0) return null;
-    
-    // ws_xpixel/ws_ypixel are often 0 on older terminals
-    if (wsz.xpixel == 0 or wsz.ypixel == 0 or wsz.col == 0 or wsz.row == 0) {
-        return null;
-    }
-    
-    const cell_w = @as(f32, @floatFromInt(wsz.xpixel)) / @as(f32, @floatFromInt(wsz.col));
-    const cell_h = @as(f32, @floatFromInt(wsz.ypixel)) / @as(f32, @floatFromInt(wsz.row));
-    
-    return cell_h / cell_w;
-}
-
-pub const DEFAULT_CELL_ASPECT: f32 = 2.0;
-pub fn getCellAspectOrDefault() f32 {
-    return getCellAspect() orelse DEFAULT_CELL_ASPECT;
-}
-
-pub fn GlyphPixmap(comptime w: u16, comptime h: u16) type {
+// Data structure storing a vector mask of the positive and negative space of a glyph.
+pub fn GlyphMask(comptime w: u16, comptime h: u16) type {
     return struct {
-        pixmap_pos: @Vector(w*h, f32) = @splat(0),
-        pixmap_neg: @Vector(w*h, f32) = @splat(0),
+        neg: @Vector(w*h, f32) = @splat(0),
+        pos: @Vector(w*h, f32) = @splat(0),
 
-        pub fn generate(self: *@This(), codepoint: u32, generator: *const PixmapGenerator) void {
-            generator.generateScaled(codepoint, w, h, &self.pixmap_pos);
-            self.pixmap_neg = @as(@Vector(w*h, f32), @splat(1.0)) - self.pixmap_pos;
+        pub fn generate(self: *@This(), codepoint: u32, generator: *const GlyphMaskGenerator) !void {
+            try generator.generateScaled(codepoint, w, h, &self.pos);
+            self.neg = @as(@Vector(w*h, f32), @splat(1.0)) - self.pos;
         }
     };
 }
 
-pub const PixmapGenerator = struct {
+pub const GlyphMaskGenerator = struct {
     font: c.stbtt_fontinfo,
     font_data: []u8,
     cell_aspect: f32,
@@ -62,11 +46,15 @@ pub const PixmapGenerator = struct {
     const SUPERSAMPLE: u16 = 32;
     const MAX_FONT_FILE_SIZE = 10000000;
 
-    pub fn init(allocator: mem.Allocator, font_path: []const u8) !PixmapGenerator {
-        return initWithAspect(allocator, font_path, getCellAspectOrDefault());
+    // initialize a glyph mask generator from a font
+    pub fn init(allocator: mem.Allocator, font_path: []const u8) !GlyphMaskGenerator {
+        const dims = term.getDims();
+        return initWithAspect(allocator, font_path,
+            @as(f32, @floatFromInt(dims.cell_h)) / @as(f32, @floatFromInt(dims.cell_w)));
     }
-
-    pub fn initWithAspect(allocator: mem.Allocator, font_path: []const u8, aspect: f32) !PixmapGenerator {
+    
+    // specify aspect ratio
+    pub fn initWithAspect(allocator: mem.Allocator, font_path: []const u8, aspect: f32) !GlyphMaskGenerator {
         const font_dir = try fs.openDirAbsolute("/usr/share/fonts", .{});
         const font_data = try font_dir.readFileAlloc(allocator, font_path, MAX_FONT_FILE_SIZE);
         var font: c.stbtt_fontinfo = undefined;
@@ -76,32 +64,33 @@ pub const PixmapGenerator = struct {
         return .{ .font = font, .font_data = font_data, .cell_aspect = aspect };
     }
 
-    pub fn deinit(self: PixmapGenerator, allocator: mem.Allocator) void {
+    pub fn deinit(self: GlyphMaskGenerator, allocator: mem.Allocator) void {
         allocator.free(self.font_data);
     }
 
-    pub fn generateScaled(self: PixmapGenerator, codepoint: u32, comptime w: u16, comptime h: u16, pixmap_buf: *[w * h]f32) void {
+    // Generate a glyph mask of arbitrary dimensions effectively stretched from how the glyph appears in a terminal cell.
+    pub fn generateScaled(self: GlyphMaskGenerator, codepoint: u32, comptime w: u16, comptime h: u16, mask_buf: *[w * h]f32) !void {
+        // Set dims for high-res glyph mask to downsample from
         const virtual_w: u16 = w * SUPERSAMPLE;
         const virtual_h: u16 = @intFromFloat(@as(f32, @floatFromInt(w)) * self.cell_aspect * @as(f32, SUPERSAMPLE));
 
-        // allocator for temp buf
-        var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+        // allocate temp buf for high-res render
+        var debug_allocator: heap.DebugAllocator(.{}) = .init;
         defer _=debug_allocator.deinit();
-        const temp_buf: []u8 = debug_allocator.allocator().alloc(u8, virtual_w * virtual_h) catch {
-            std.debug.print("Alloc failed", .{});
-            return;
-        };
+        const temp_buf: []u8 = try debug_allocator.allocator().alloc(u8, virtual_w * virtual_h);
+
         for (0..virtual_w*virtual_h) |n| {
             temp_buf[n] = 0;
         }
         
         defer debug_allocator.allocator().free(temp_buf);
 
+        // Render high-res to buffer
         self.renderToBuffer(codepoint, virtual_w, virtual_h, temp_buf);
 
+        // Downsample and stretch aspect to target dimensions
         const region_w = virtual_w / w;
         const region_h = virtual_h / h;
-
         for (0..h) |out_y| {
             for (0..w) |out_x| {
                 var sum: u32 = 0;
@@ -112,13 +101,14 @@ pub const PixmapGenerator = struct {
                         sum += if (temp_buf[(start_y + dy) * virtual_w + (start_x + dx)] > 0) 255 else 0;
                     }
                 }
-                pixmap_buf[out_y * w + out_x] = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(region_w * region_h)) / 255;
+                mask_buf[out_y * w + out_x] = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(region_w * region_h)) / 255;
             }
         }
     }
 
-    fn renderToBuffer(self: PixmapGenerator, codepoint: u32, buf_w: u16, buf_h: u16, buf: []u8) void {
-        std.debug.assert(codepoint < std.math.maxInt(c_int));
+    // Render a unicode character to a buffer of a fixed size.
+    fn renderToBuffer(self: GlyphMaskGenerator, codepoint: u32, buf_w: u16, buf_h: u16, buf: []u8) void {
+        std.debug.assert(codepoint < math.maxInt(c_int));
         const glyph_idx = c.stbtt_FindGlyphIndex(&self.font, @intCast(codepoint));
         if (glyph_idx == 0) return;
 
