@@ -25,6 +25,7 @@ pub fn build(b: *std.Build) void {
         .registry = b.path("src/external/vk.xml"),
     });
     exe_mod.addImport("vulkan", vulkan.module("vulkan-zig"));
+    exe.linkSystemLibrary("vulkan");
     
     b.installArtifact(exe);
 
