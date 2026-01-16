@@ -5,15 +5,23 @@ const patch = @import("image_patch.zig");
 const glyph = @import("glyph.zig");
 const uni_im = @import("unicode_image.zig");
 
+pub fn GlyphSetCache(comptime w: u8, comptime h: u8) type {
+    return struct {
+        codepoints: []u32,
+        masks: []glyph.GlyphMask(w, h),
+        color_eqns: []GlyphColorEqn(w, h)
+    };
+}
+
 // Data structure for storing precomputed values for finding the optimal colors for the glyph to represent a given patch
-pub fn glyphColorSolver(
+pub fn glyphColorEqn(
     comptime w: u8,
     comptime h: u8,
     g: glyph.GlyphMask(w,h),
-) GlyphColorSolver(w, h) {
+) GlyphColorEqn(w, h) {
     const B = @as(@Vector(w*h, f32), g.neg);
     const F = @as(@Vector(w*h, f32), g.pos);
-    return GlyphColorSolver(w, h) {
+    return GlyphColorEqn(w, h) {
         .B = B,
         .F = F,
         .BB = @reduce(.Add, B * B),
@@ -29,7 +37,7 @@ pub fn computePixel(
     im_patch: patch.ImagePatch(w, h),
     codepoints: []u32,
     glyphs: []glyph.GlyphMask(w, h),
-    glyph_color_solvers: []GlyphColorSolver(w, h)
+    glyph_color_solvers: []GlyphColorEqn(w, h)
 ) uni_im.UnicodePixelData {
     var best_diff: u16 = math.maxInt(u16);
     var best_n: usize = 0;
@@ -49,7 +57,7 @@ pub fn computePixel(
 
 // Outside debuggin, do not need to use functions below. ----------------
 
-pub fn GlyphColorSolver(comptime w: u8, comptime h: u8) type {
+pub fn GlyphColorEqn(comptime w: u8, comptime h: u8) type {
     return struct {
         B: @Vector(w*h, f32), // glyph background mask
         F: @Vector(w*h, f32), // glyph foreground mask
@@ -58,14 +66,14 @@ pub fn GlyphColorSolver(comptime w: u8, comptime h: u8) type {
         BF: f32, // B dot F  /  F dot B
         det: f32, // FF*BB - BF*BF
 
-        pub fn solve(self: GlyphColorSolver(w, h), im_patch: patch.ImagePatch(w, h)) uni_im.UnicodePixelData {
+        pub fn solve(self: GlyphColorEqn(w, h), im_patch: patch.ImagePatch(w, h)) uni_im.UnicodePixelData {
             const r = self.solveChannel(im_patch.r);
             const g = self.solveChannel(im_patch.g);
             const b = self.solveChannel(im_patch.b);
             return .{ .br = r.C_b, .bg = g.C_b, .bb = b.C_b, .fr = r.C_f, .fg = g.C_f, .fb = b.C_f, .codepoint = undefined};
         }
 
-        fn solveChannel(self: GlyphColorSolver(w, h), im_patch: @Vector(w*h, u8)) struct { C_b: u8, C_f: u8 } {
+        fn solveChannel(self: GlyphColorEqn(w, h), im_patch: @Vector(w*h, u8)) struct { C_b: u8, C_f: u8 } {
             const P: @Vector(w*h, f32) = @floatFromInt(im_patch);
             const C_b_num = @reduce(.Add, P * self.B) * self.FF - @reduce(.Add, P * self.F) * self.BF;
             const C_f_num = @reduce(.Add, P * self.F) * self.BB - @reduce(.Add, P * self.B) * self.BF;

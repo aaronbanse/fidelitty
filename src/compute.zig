@@ -4,6 +4,7 @@ const mem = std.mem;
 const vk = @import("vulkan");
 
 const uni_im = @import("unicode_image.zig");
+const algo = @import("algo.zig");
 const glyph = @import("glyph.zig");
 
 /// Non-owning handle to a render pipeline managed by compute context
@@ -41,45 +42,63 @@ pub const Context = struct {
 
     // INTERNAL
     // ---------------------------
+
+    // Convenience struct since we always bind memory to buffers
+    const MemBuffer = struct {
+        buf: vk.Buffer,
+        mem: vk.DeviceMemory,
+        size: usize,
+    };
+
+    // Struct for storing handles to resources associated with pipelines,
+    // one for each pipeline
     const PipelineResources = struct {
-        input_buf: vk.Buffer,
-        input_mem: vk.DeviceMemory,
+        input_buf: MemBuffer,
+        device_input_buf: MemBuffer,
+        device_output_buf: MemBuffer,
+        output_buf: MemBuffer,
 
-        device_input_buf: vk.Buffer,
-        device_input_mem: vk.DeviceMemory,
-
-        device_output_buf: vk.Buffer,
-        device_output_mem: vk.DeviceMemory,
-
-        output_buf: vk.Buffer,
-        output_mem: vk.DeviceMemory,
+        buf_io_desc_set: vk.DescriptorSet,
 
         cmd_buf: vk.CommandBuffer,
 
         compute_pipeline: vk.Pipeline,
-        buf_io_desc_layout: vk.DescriptorSetLayout,
-        buf_io_desc_set: vk.DescriptorSet,
+
+        pipeline_complete: vk.Fence,
     };
 
-    // store active pipelines
-    _pipelines: std.AutoHashMap(HandleID, PipelineResources),
-    
-    // pipeline globals - glyph set and associated descriptor set
-    _glyph_set_buf: vk.Buffer,
+    // Layouts reused for each pipeline
+    _io_desc_layout: vk.DescriptorSetLayout,
     _glyph_set_desc_layout: vk.DescriptorSetLayout,
-    _glyph_set_desc_set: vk.DescriptorSet,
+    _pipeline_layout: vk.PipelineLayout,
 
-    // dispatch tables
-    _vkb: vk.BaseWrapper,
-    _vki: vk.InstanceWrapper,
-    _vkd: vk.DeviceWrapper,
-    
     // physical device info
     _physical_device: vk.PhysicalDevice,
     _mem_props: vk.PhysicalDeviceMemoryProperties,
 
+    // store active pipelines
+    _pipelines: std.AutoHashMap(HandleID, PipelineResources),
+    _max_pipelines: u8,
+    
+    // Buffers for pipeline-global glyph set
+    _device_codepoint_buf: MemBuffer, // Unicode Codepoints
+    _device_mask_buf: MemBuffer, // Glyph Masks
+    _device_color_eqn_buf: MemBuffer, // Precomputed Color Equations
+
+    // Command buffer for one-time upload
+    _glyph_set_upload_cmd_buf: vk.CommandBuffer,
+
+    // Descriptors to bind glyph set data to compute shaders
+    _glyph_set_desc_set: vk.DescriptorSet,
+
+    // Vulkan instance wrappers for dispatch tables
+    _vkb: vk.BaseWrapper,
+    _vki: vk.InstanceWrapper,
+    _vkd: vk.DeviceWrapper,
     _instance: vk.InstanceProxy,
     _device: vk.DeviceProxy,
+    
+    // Handles
     _queue: vk.Queue,
     _cmd_pool: vk.CommandPool,
     _desc_pool: vk.DescriptorPool,
@@ -91,22 +110,36 @@ pub const Context = struct {
     // Did we create this context or did we derive it from an existing vulkan instance
     context_ownership: ContextOwnershipMode,
 
-    pub fn init(self: *@This(), allocator: mem.Allocator) !void {
+    // Initialize a standalone vulkan context and setup machinery
+    pub fn init(
+        self: *@This(),
+        allocator: mem.Allocator,
+        comptime w: u8,
+        comptime h: u8,
+        glyph_set: algo.GlyphSetCache(w, h),
+        max_pipelines: u8
+    ) !void {
         self.context_ownership = .Owned;
         self._pipelines = .init(allocator);
+        self._max_pipelines = max_pipelines;
         self.loadBase();
-        try self.loadInstance();
-        const compute_device_indices = try self.loadDevice();
-        self.loadQueue(compute_device_indices.queue_fam_index);
-        try self.loadCommandPool(compute_device_indices.queue_fam_index);
+        try self.createInstance();
+        const compute_device_indices = try self.createDevice();
+        self.createQueue(compute_device_indices.queue_fam_index);
+        try self.createCommandPool(compute_device_indices.queue_fam_index);
+        try self.createDescriptorPool(max_pipelines);
+        try self.createLayouts();
+        try self.createGlyphSet(w, h, glyph_set);
     }
 
+    // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
     pub fn initFromExisting(self: *@This(), allocator: mem.Allocator) !void {
         self.context_ownership = .Borrowed;
         self._pipelines = .init(allocator);
         // TODO: implement
     }
 
+    // Cleanup resources
     pub fn deinit(self: *@This()) void {
         self._pipelines.deinit();
         // if owned, deinit everything, if borrowed, deinit pipelines and buffers only
@@ -122,16 +155,16 @@ pub const Context = struct {
         pix_w: u8,
         pix_h: u8
     ) !PipelineHandle {
-        const input_size = @as(usize, im_w) * @as(usize, im_h) * @as(usize, pix_w) * @as(usize, pix_h) * @sizeOf(u8);
+        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, pix_w) * @as(usize, pix_h) * @sizeOf(u8);
         const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
 
-        // initialize resources
+        // initialize and allocate resources
         var resources: PipelineResources = undefined;
         try self.createPipelineBuffers(&resources, input_size, output_size);
 
-        // allocate memory for resources
-        try self.allocatePipelineBuffers(&resources);
+        try self.createDescriptorSets(&resources);
 
+// create handle mapped to input / output buffersTo run code, enable code execution and file creation in Settings > Capabilities.Claude is AI and can make mistakes. Please double-check responses.
         // create handle mapped to input / output buffers
         var handle: PipelineHandle = .{
             .out_im_w = im_w,
@@ -142,6 +175,10 @@ pub const Context = struct {
         // map handle to input / output buffers
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
 
+        try self.createComputePipeline(&resources);
+
+        try self.createPipelineCommandBuffer(&resources);
+
         // obtain unique id for handle
         var id: usize = 1;
         while (self._pipelines.contains(id)) : (id += 1) {}
@@ -151,6 +188,38 @@ pub const Context = struct {
         try self._pipelines.put(id, resources);
         
         return handle;
+    }
+
+    pub fn executeRenderPipelines(self: @This(), pipeline_handles: []PipelineHandle) !void {
+        for (pipeline_handles) |handle| {
+            const res: PipelineResources = self._pipelines.get(handle._id)
+                orelse return error.InvalidPipelineHandle;
+
+            try self._device.resetFences(1, &.{res.pipeline_complete});
+
+            try self._device.queueSubmit(
+                self._queue,
+                &[_]vk.SubmitInfo{.{
+                    .command_buffer_count = 1,
+                    .p_command_buffers = @ptrCast(&res.cmd_buf),
+                    .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
+                }},
+                res.pipeline_complete,
+            );
+        }
+    }
+
+    /// Note: max 32 pipelines at once
+    pub fn waitRenderPipelines(self: @This(), pipeline_handles: []PipelineHandle) !void {
+        const timeout: u64 = 1000000;
+        var fences: [32]vk.Fence = undefined;
+
+        for (pipeline_handles, 0..) |handle, i| {
+            const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
+            fences[i] = res.pipeline_complete;
+        }
+
+        _ = try self._device.waitForFences(pipeline_handles.len, @ptrCast(&fences), vk.TRUE, timeout);
     }
 
     // TODO: implement these
@@ -168,14 +237,14 @@ pub const Context = struct {
         self._vkb = vk.BaseWrapper.load(vkGetInstanceProcAddr);
     }
 
-    fn loadInstance(self: *@This()) !void {
+    fn createInstance(self: *@This()) !void {
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
                 .api_version = vk.makeApiVersion(0, 1, 3, 0),
             },
         }, null);
         self._vki = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
-        self._instance = Instance.init(instance_handle, &self._vki);
+        self._instance = vk.InstanceProxy.init(instance_handle, &self._vki);
     }
 
     const ComputeDeviceIndices = struct {
@@ -183,7 +252,7 @@ pub const Context = struct {
         queue_fam_index: u32
     };
 
-    fn loadDevice(self: *@This()) !ComputeDeviceIndices {
+    fn createDevice(self: *@This()) !ComputeDeviceIndices {
         // find compute-capable device
         var num_devices: u32 = undefined;
         var devices: [16]vk.PhysicalDevice = undefined;
@@ -193,7 +262,7 @@ pub const Context = struct {
 
         // save physical device info
         self._physical_device = devices[compute_indices.dev_index];
-        self._mem_props = self._instance.getPhysicalDeviceProperties(self._physical_device);
+        self._mem_props = self._instance.getPhysicalDeviceMemoryProperties(self._physical_device);
 
         // create device
         const queue_priority: f32 = 1.0;
@@ -206,20 +275,299 @@ pub const Context = struct {
             }},
         }, null);
         self._vkd = vk.DeviceWrapper.load(device_handle, self._vki.dispatch.vkGetDeviceProcAddr.?);
-        self._device = Device.init(device_handle, &self._vkd);
+        self._device = vk.DeviceProxy.init(device_handle, &self._vkd);
 
         return compute_indices;
     }
 
-    fn loadQueue(self: *@This(), compute_queue_fam_index: u32) void {
+    fn createQueue(self: *@This(), compute_queue_fam_index: u32) void {
         self._queue = self._device.getDeviceQueue(compute_queue_fam_index, 0);
     }
 
-    fn loadCommandPool(self: *@This(), compute_queue_fam_index: u32) !void {
+    fn createCommandPool(self: *@This(), compute_queue_fam_index: u32) !void {
         self._cmd_pool = try self._device.createCommandPool(&.{
             .queue_family_index = compute_queue_fam_index,
             .flags = .{},
         }, null);
+    }
+
+    fn createDescriptorPool(self: *@This(), max_pipelines: u8) !void {
+        self._desc_pool = try self._device.createDescriptorPool(&.{
+            .max_sets = 1 + max_pipelines,
+            .pool_size_count = 1,
+            .p_pool_sizes = &[_]vk.DescriptorPoolSize{
+                .{
+                    .type = .storage_buffer,
+                   // 3 static storage buffers and 2 storage buffers per pipeline 
+                    .descriptor_count = 3 + (max_pipelines * 2),
+                },
+            },
+        }, null);
+    }
+
+    fn createLayouts(self: *@This()) !void {
+        // Descriptor layout for static glyph set buffers
+        self._glyph_set_desc_layout = try self._device.createDescriptorSetLayout(&.{
+            .binding_count = 3,
+            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
+                .{
+                    .binding = 0,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{ .compute_bit = true },
+                },
+                .{
+                    .binding = 1,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{ .compute_bit = true },
+                },
+                .{
+                    .binding = 2,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{ .compute_bit = true },
+                },
+            },
+        }, null);
+
+        // Descriptor layout for pipeline input / output buffers
+        self._io_desc_layout = try self._device.createDescriptorSetLayout(&.{
+            .binding_count = 2,
+            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
+                .{
+                    .binding = 0,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{ .compute_bit = true },
+                },
+                .{
+                    .binding = 1,
+                    .descriptor_type = .storage_buffer,
+                    .descriptor_count = 1,
+                    .stage_flags = .{ .compute_bit = true },
+                },
+            },
+        }, null);
+
+        // Define pipeline layout
+        self._pipeline_layout = try self._device.createPipelineLayout(&.{
+            .set_layout_count = 2,
+            .p_set_layouts = &[_]vk.DescriptorSetLayout{
+                self._glyph_set_desc_layout,
+                self._io_desc_layout
+            },
+            .push_constant_range_count = 0,
+            .p_push_constant_ranges = null,
+        }, null);
+    }
+
+    fn createGlyphSet(self: *@This(), comptime w: u8, comptime h: u8, glyph_set: algo.GlyphSetCache(w,h)) !void {
+        std.debug.assert(glyph_set.color_eqns.len == glyph_set.masks.len and glyph_set.masks.len == glyph_set.codepoints.len);
+        const el_num = glyph_set.codepoints.len;
+
+        // allocate buffers
+        self._device_codepoint_buf = try self.allocateMemBuffer(
+            glyph_set.codepoints.len * @sizeOf(u32),
+            .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
+            .{ .device_local_bit = true }
+        );
+
+        self._device_mask_buf = try self.allocateMemBuffer(
+            glyph_set.masks.len * @sizeOf(glyph.GlyphMask(w,h)),
+            .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
+            .{ .device_local_bit = true }
+        );
+
+        self._device_color_eqn_buf = try self.allocateMemBuffer(
+            glyph_set.color_eqns.len * @sizeOf(algo.GlyphColorEqn(w,h)),
+            .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
+            .{ .device_local_bit = true }
+        );
+
+        // allocate the one descriptor set which will be used many times
+        try self._device.allocateDescriptorSets(&.{
+            .descriptor_pool = self._desc_pool,
+            .descriptor_set_count = 1,
+            .p_set_layouts = &[_]vk.DescriptorSetLayout{self._glyph_set_desc_layout},
+        }, @ptrCast(&self._glyph_set_desc_set));
+
+        // bind descriptors to buffers
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
+            .{
+                .dst_set = self._glyph_set_desc_set,
+                .dst_binding = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = self._device_codepoint_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+            },
+            .{
+                .dst_set = self._glyph_set_desc_set,
+                .dst_binding = 1,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = self._device_mask_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+            },
+            .{
+                .dst_set = self._glyph_set_desc_set,
+                .dst_binding = 2,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = self._device_color_eqn_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+            },
+        }, null);
+
+        // allocate buffer
+        const staging_buffer = try self.allocateMemBuffer(
+            el_num * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(algo.GlyphColorEqn(w,h))),
+            .{ .transfer_src_bit = true },
+            .{ .host_visible_bit = true, .host_coherent_bit = true }
+        );
+
+        // map buffer to cpu pointer for memcpy
+        const staging_mem_reqs = try self._device.getBufferMemoryRequirements(staging_buffer.buf);
+        var staging_ptr_raw: ?*anyopaque = undefined;
+        try self._device.mapMemory(staging_buffer.mem, 0, staging_mem_reqs.size, .{}, &staging_ptr_raw);
+
+        // cast raw to suitable types
+        const staging_ptr_codepoints: [*]u32 = @ptrCast(staging_ptr_raw);
+        const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + el_num)); // offset is end of prev
+        const staging_ptr_eqns: [*]algo.GlyphColorEqn(w,h) = @ptrCast(@alignCast(staging_ptr_masks + el_num)); // offset is end of prev
+
+        // copy memory into staging buffer
+        @memcpy(staging_ptr_codepoints[0..el_num], glyph_set.codepoints[0..el_num]);
+        @memcpy(staging_ptr_masks[0..el_num], glyph_set.masks[0..el_num]);
+        @memcpy(staging_ptr_eqns[0..el_num], glyph_set.color_eqns[0..el_num]);
+
+        try self._device.allocateCommandBuffers(&.{
+            .command_pool = self._cmd_pool,
+            .level = .primary,
+            .command_buffer_count = 1,
+        }, @ptrCast(&self._glyph_set_upload_cmd_buf));
+
+        try self._device.beginCommandBuffer(
+            self._glyph_set_upload_cmd_buf,
+            &.{ .flags = .{ .one_time_submit_bit = true } }
+        );
+
+        // copy codepoints
+        self._device.cmdCopyBuffer(
+            self._glyph_set_upload_cmd_buf,
+            staging_buffer.buf,
+            self._device_codepoint_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = 0,
+                .dst_offset = 0,
+                .size = self._device_codepoint_buf.size,
+            }},
+        );
+
+        // copy masks
+        self._device.cmdCopyBuffer(
+            self._glyph_set_upload_cmd_buf,
+            staging_buffer.buf,
+            self._device_mask_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = self._device_codepoint_buf.size,
+                .dst_offset = 0,
+                .size = self._device_mask_buf.size,
+            }},
+        );
+
+        // copy equation caches
+        self._device.cmdCopyBuffer(
+            self._glyph_set_upload_cmd_buf,
+            staging_buffer.buf,
+            self._device_color_eqn_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = self._device_codepoint_buf.size + self._device_mask_buf.size,
+                .dst_offset = 0,
+                .size = self._device_color_eqn_buf.size,
+            }},
+        );
+
+        // done
+        try self._device.endCommandBuffer(self._glyph_set_upload_cmd_buf);
+
+        const fence = try self._device.createFence(&.{}, null);
+        defer self._device.destroyFence(fence, null);
+
+        // submit command
+        try self._device.queueSubmit(
+            self._queue,
+            &[_]vk.SubmitInfo{.{
+                .command_buffer_count = 1,
+                .p_command_buffers = @ptrCast(&self._glyph_set_upload_cmd_buf),
+            }},
+            fence
+        );
+
+        // cost for waiting is minimal, simplifies logic later on with semaphores
+        const timeout: u64 = 1000000;
+        _ = try self._device.waitForFences(1, &.{fence}, vk.TRUE, timeout);
+    }
+
+    // Create and allocate a buffer and associated memory
+    fn allocateMemBuffer(
+        self: @This(),
+        size: usize,
+        usage: vk.BufferUsageFlags,
+        mem_props: vk.MemoryPropertyFlags
+    ) !MemBuffer {
+        var mem_buf: MemBuffer = .{ .size = size };
+        
+        // create buffer
+        mem_buf.buf = try self._device.createBuffer(&.{
+            .size = size,
+            .usage = usage,
+            .sharing_mode = .exclusive,
+        }, null);
+        
+        const mem_reqs = try self._device.getBufferMemoryRequirements(mem_buf.buf);
+
+        // find suitable memory type
+        const mem_type = findMemoryType(
+            self._mem_props,
+            mem_reqs.memory_type_bits,
+            mem_props
+        ) orelse return error.NoSuitableMemory;
+
+        // allocate memory
+        mem_buf.mem = try self._device.allocateMemory(&.{
+            .allocation_size = mem_reqs.size,
+            .memory_type_index = mem_type,
+        }, null);
+
+        // bind buffer to memory w/ 0 offset
+        self._device.bindBufferMemory(mem_buf.buf, mem_buf.mem, 0);
+
+        return mem_buf;
+    }
+
+    fn findMemoryType(
+        mem_props: vk.PhysicalDeviceMemoryProperties,
+        type_filter: u32,
+        required_flags: vk.MemoryPropertyFlags,
+    ) ?u32 {
+        for (0..mem_props.memory_type_count) |i| {
+            const type_bit = @as(u32, 1) << @intCast(i);
+            const has_type = (type_filter & type_bit) != 0;
+            const has_flags = mem_props.memory_types[i].property_flags.contains(required_flags);
+            if (has_type and has_flags) return @intCast(i);
+        }
+        return null;
     }
 
     fn findComputeDevice(
@@ -251,116 +599,85 @@ pub const Context = struct {
 
     fn createPipelineBuffers(self: *@This(), res: *PipelineResources, input_size: usize, output_size: usize) !void {
         // cpu-side input buffer to write to
-        res.input_buf = try self._device.createBuffer(&.{
-            .size = input_size,
-            .usage = .{ .transfer_src_bit = true, },
-            .sharing_mode = .exclusive,
-        }, null);
+        res.input_buf = try self.allocateMemBuffer(
+            input_size,
+            .{ .transfer_src_bit = true, },
+            .{ .host_visible_bit = true, .host_coherent_bit = true }
+        );
 
         // gpu-side input buffer that shaders can bind to
-        res.device_input_buf = try self._device.createBuffer(&.{
-            .size = input_size,
-            .usage = .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
-            .sharing_mode = .exclusive,
-        }, null);
+        res.device_input_buf = try self.allocateMemBuffer(
+            input_size,
+            .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
+            .{ .device_local_bit = true }
+        );
 
         // gpu-side output buffer that shaders can bind to
-        res.device_output_buf = try self._device.createBuffer(&.{
-            .size = output_size,
-            .usage = .{ .transfer_src_bit = true, .storage_buffer_bit = true },
-            .sharing_mode = .exclusive,
-        }, null);
+        res.device_output_buf = try self.allocateMemBuffer(
+            output_size,
+            .{ .transfer_src_bit = true, .storage_buffer_bit = true },
+            .{ .device_local_bit = true },
+        );
 
         // cpu-side output buffer to read from
-        res.output_buf = try self._device.createBuffer(&.{
-            .size = output_size,
-            .usage = .{ .transfer_dst_bit = true },
-            .sharing_mode = .exclusive,
+        res.output_buf = try self.allocateMemBuffer(
+            output_size,
+            .{ .transfer_dst_bit = true },
+            .{ .host_visible_bit = true, .host_cached_bit = true }
+        );
+    }
+
+    fn createDescriptorSets(self: *@This(), res: *PipelineResources) !void {
+        try self._device.allocateDescriptorSets(&.{
+            .descriptor_pool = self._desc_pool,
+            .descriptor_set_count = 1,
+            .p_set_layouts = &[_]vk.DescriptorSetLayout{self._io_desc_layout},
+        }, @ptrCast(&res.buf_io_desc_set));
+
+        // bind I/O buffers to descriptor set
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
+            .{
+                .dst_set = res.buf_io_desc_set,
+                .dst_binding = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = res.device_input_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+            },
+            .{
+                .dst_set = res.buf_io_desc_set,
+                .dst_binding = 1,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = res.device_output_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+            },
         }, null);
     }
 
-    fn findMemoryType(
-        mem_props: vk.PhysicalDeviceMemoryProperties,
-        type_filter: u32,
-        required_flags: vk.MemoryPropertyFlags,
-    ) ?u32 {
-        for (0..mem_props.memory_type_count) |i| {
-            const type_bit = @as(u32, 1) << @intCast(i);
-            const has_type = (type_filter & type_bit) != 0;
-            const has_flags = mem_props.memory_types[i].property_flags.contains(required_flags);
-            if (has_type and has_flags) return @intCast(i);
-        }
-        return null;
-    }
-
-    fn allocatePipelineBuffers(self: *@This(), res: *PipelineResources) !void {
-        // link memory properties to each buffer for iteration
-        const buf_mem_infos = [_]struct {
-            buf: *vk.Buffer,
-            mem: *vk.DeviceMemory,
-            props: vk.MemoryPropertyFlags
-        } {
-            .{
-                .buf = &res.input_buf,
-                .mem = &res.input_mem,
-                .props = .{ .host_visible_bit = true, .host_coherent_bit = true },
-            },
-            .{
-                .buf = &res.device_input_buf,
-                .mem = &res.device_input_mem,
-                .props = .{ .device_local_bit = true },
-            },
-            .{
-                .buf = &res.device_output_buf,
-                .mem = &res.device_output_mem,
-                .props = .{ .device_local_bit = true },
-            },
-            .{
-                .buf = &res.output_buf,
-                .mem = &res.output_mem,
-                .props = .{ .host_visible_bit = true, .host_cached_bit = true },
-            },
-        };
-
-        for (buf_mem_infos) |info| {
-            // query memory requirements from buffer
-            const mem_reqs = try self._device.getBufferMemoryRequirements(info.buf.*);
-
-            // find suitable memory type
-            const mem_type = findMemoryType(
-                self._mem_props,
-                mem_reqs.memory_type_bits,
-                info.props
-            ) orelse return error.NoSuitableMemory;
-
-            // allocate memory
-            info.mem.* = try self._device.allocateMemory(&.{
-                .allocation_size = mem_reqs.size,
-                .memory_type_index = mem_type,
-            }, null);
-
-            // bind buffer to memory w/ 0 offset
-            self._device.bindBufferMemory(info.buf.*, info.mem.*, 0);
-        }
-    }
-
-    fn setupPipelineCommandBuffer(self: *@This(), res: *PipelineResources) !void {
+    fn createPipelineCommandBuffer(self: *@This(), res: *PipelineResources) !void {
         // allocate buffer
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
             .level = .primary,
             .command_buffer_count = 1,
-        }, @ptrCast(&res.cmd_buf)); 
+        }, @ptrCast(&res.cmd_buf));
 
         // record instructions
         try self._device.beginCommandBuffer(res.cmd_buf, &.{});
 
         // copy CPU to GPU
-        self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf, res.device_input_buf, 1, &[_]vk.BufferCopy{
+        self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf.buf, res.device_input_buf.buf, 1, &[_]vk.BufferCopy{
             .{ .src_offset = 0, .dest_offset = 0, .size = res.input_buf.size }
         });
 
-        // memory barrier to ensure write is valid before shader reads it
+        // memory barrier to ensure write is complete before shader reads it
         self._device.cmdPipelineBarrier(
             res.cmd_buf,
             .{ .transfer_bit = true },
@@ -372,19 +689,56 @@ pub const Context = struct {
                 .dst_access_mask = .{ .shader_read_bit = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
                 .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-                .buffer = res.device_buffer,
+                .buffer = res.device_input_buf.buf,
                 .offset = 0,
                 .size = vk.WHOLE_SIZE,
             }},
             0, null
         );
 
-        self._device.cmdBindPipeline(res.cmd_buf, .compute, 0);// TODO: fix
-        
+        self._device.cmdBindPipeline(res.cmd_buf, .compute, res.compute_pipeline);
+
+        self._device.cmdBindDescriptorSets(
+            res.cmd_buf,
+            .compute,
+            self._pipeline_layout,
+            0, 2, &.{ self._glyph_set_desc_set, res.buf_io_desc_set },
+            0, null
+        );
+
+        self._device.cmdDispatch(res.cmd_buf, 0, 0, 0); // TODO: fix this once we write the shader
+
+        // memory barrier to ensure compute is complete before readback to cpu
+        self._device.cmdPipelineBarrier(
+            res.cmd_buf,
+            .{ .compute_shader_bit = true },
+            .{ .transfer_bit = true },
+            .{},
+            0, null,
+            1, &.{.{
+                .src_access_mask = .{ .shader_write_bit = true },
+                .dst_access_mask = .{ .transfer_read_bit = true },
+                .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+                .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
+                .buffer = res.device_output_buf.buf,
+                .offset = 0,
+                .size = vk.WHOLE_SIZE,
+            }},
+            0, null
+        );
+
+        // readback gpu - cpu
+        self._device.cmdCopyBuffer(res.cmd_buf, res.device_output_buf.buf, res.output_buf.buf, 1, &[_]vk.BufferCopy{
+            .{ .src_offset = 0, .dest_offset = 0, .size = res.output_buf.size }
+        });
+
         try self._device.endCommandBuffer(res.cmd_buf);
+
+        // create fence so cpu can wait on completion
+        res.pipeline_complete = try self._device.createFence(&.{}, null);
     }
 
-    fn setupComputePipeline(self: *@This(), res: *PipelineResources) !void {
+    fn createComputePipeline(self: *@This(), res: *PipelineResources) !void {
         // create shader module
         const shader_code = @embedFile("shader.spv");
         const shader_module = try self._device.createShaderModule(&.{
@@ -392,24 +746,19 @@ pub const Context = struct {
             .p_code = @ptrCast(@alignCast(shader_code.ptr)),
         }, null);
 
-        // descriptor set defining binding to input buffer, and output buffer
-        const desc_layout = try self._device.createDescriptorSetLayout(&.{
-            .binding_count = 2,
-            .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
-                .{
-                    .binding = 0,
-                    .descriptor_type = .storage_buffer,
-                    .descriptor_count = 1,
-                    .stage_flags = .{ .compute_bit = true },
+        _ = try self._device.createComputePipelines(
+            .null_handle,  // pipeline cache TODO: make caching optional, save to ~/.cache
+            &[_]vk.ComputePipelineCreateInfo{.{
+                .stage = .{
+                    .stage = .{ .compute_bit = true },
+                    .module = shader_module,
+                    .p_name = "main",  // entry point
                 },
-                .{
-                    .binding = 1,
-                    .descriptor_type = .storage_buffer,
-                    .descriptor_count = 1,
-                    .stage_flags = .{ .compute_bit = true },
-                },
-            },
-        }, null);
+                .layout = self._pipeline_layout,
+            }},
+            null,
+            @ptrCast(&res.compute_pipeline),
+        );
     }
 
     fn mapCpuBuffersToHandle(
@@ -419,15 +768,13 @@ pub const Context = struct {
         output_surface: *[*]uni_im.UnicodePixelData
     ) !void {
         // map input
-        const input_mem_reqs = try self._device.getBufferMemoryRequirements(res.input_buf);
         var input_raw: ?*anyopaque = undefined;
-        try self._device.mapMemory(res.input_mem, 0, input_mem_reqs.size, .{}, &input_raw);
+        try self._device.mapMemory(res.input_buf.mem, 0, res.input_buf.size, .{}, &input_raw);
         input_surface.* = @ptrCast(input_raw);
 
         // map output
-        const output_mem_reqs = try self._device.getBufferMemoryRequirements(res.output_buf);
         var output_raw: ?*anyopaque = undefined;
-        try self._device.mapMemory(res.output_mem, 0, output_mem_reqs.size, .{}, &output_raw);
+        try self._device.mapMemory(res.output_buf.mem, 0, res.output_buf.size, .{}, &output_raw);
         output_surface.* = @ptrCast(output_raw);
     }
 };
