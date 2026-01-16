@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     // compile shader
     const shader_cmd = b.addSystemCommand(&.{
         "glslc",
+        "-fshader-stage=compute",
         "--target-env=vulkan1.3",
         "-o",
     });
