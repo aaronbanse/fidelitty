@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = std.math;
+const mem = std.mem;
 
 const patch = @import("image_patch.zig");
 const glyph = @import("glyph.zig");
@@ -7,9 +8,36 @@ const uni_im = @import("unicode_image.zig");
 
 pub fn GlyphSetCache(comptime w: u8, comptime h: u8) type {
     return struct {
-        codepoints: []u32,
-        masks: []glyph.GlyphMask(w, h),
-        color_eqns: []GlyphColorEqn(w, h)
+        codepoints: []const u32,
+        masks: []const glyph.GlyphMask(w, h),
+        color_eqns: []const GlyphColorEqn(w, h),
+
+        /// Takes and saves a set of codepoints, allocates and generates the masks and color equation params.
+        /// Additionally allocates space to render the glyphs to, frees on completion.
+        pub fn init(self: *@This(), codepoints: []const u32, allocator: mem.Allocator) !void {
+            // copy pointer to codepoints
+            self.codepoints = codepoints;
+
+            // create mask generator
+            const glyph_mask_generator: glyph.GlyphMaskGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
+            defer glyph_mask_generator.deinit(allocator);
+
+            // generate masks
+            self.masks = try glyph.getGlyphMaskSet(w, h, codepoints, &glyph_mask_generator, allocator);
+
+            // precompute glyph color solvers
+            const color_eqns: []GlyphColorEqn(w,h) = try allocator.alloc(GlyphColorEqn(w,h), codepoints.len);
+            for (0..codepoints.len) |n| {
+                color_eqns[n] = glyphColorEqn(w, h, self.masks[n]);
+            }
+            self.color_eqns = color_eqns;
+        }
+
+        // Frees the memory backing masks and precomputed color equation params
+        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            allocator.free(self.masks);
+            allocator.free(self.color_eqns);
+        }
     };
 }
 
@@ -19,15 +47,12 @@ pub fn glyphColorEqn(
     comptime h: u8,
     g: glyph.GlyphMask(w,h),
 ) GlyphColorEqn(w, h) {
-    const B = @as(@Vector(w*h, f32), g.neg);
-    const F = @as(@Vector(w*h, f32), g.pos);
     return GlyphColorEqn(w, h) {
-        .B = B,
-        .F = F,
-        .BB = @reduce(.Add, B * B),
-        .FF = @reduce(.Add, F * F),
-        .BF = @reduce(.Add, B * F),
-        .det = @reduce(.Add, B * B) * @reduce(.Add, F * F) - @reduce(.Add, B * F) * @reduce(.Add, B * F)
+        .BB = @reduce(.Add, g.neg * g.neg),
+        .FF = @reduce(.Add, g.pos * g.pos),
+        .BF = @reduce(.Add, g.neg * g.pos),
+        .det = @reduce(.Add, g.neg * g.neg) * @reduce(.Add, g.pos * g.pos)
+             - @reduce(.Add, g.neg * g.pos) * @reduce(.Add, g.neg * g.pos)
     };
 }
 
@@ -42,7 +67,7 @@ pub fn computePixel(
     var best_diff: u16 = math.maxInt(u16);
     var best_n: usize = 0;
     for (0..glyphs.len) |n| {
-        const rec_colors = glyph_color_solvers[n].solve(im_patch);
+        const rec_colors = glyph_color_solvers[n].solve(glyphs[n], im_patch);
         const rec = glyphPatchReconstruction(w, h, rec_colors, glyphs[n]);
         const rec_diff = patchDiff(w, h, rec, im_patch);
         best_n = if (rec_diff < best_diff) n else best_n;
@@ -50,7 +75,7 @@ pub fn computePixel(
     }
 
     // faster to recompute once than call N conditional moves
-    var pixel = glyph_color_solvers[best_n].solve(im_patch);
+    var pixel = glyph_color_solvers[best_n].solve(glyphs[best_n], im_patch);
     pixel.codepoint = codepoints[best_n];
     return pixel;
 }
@@ -59,24 +84,22 @@ pub fn computePixel(
 
 pub fn GlyphColorEqn(comptime w: u8, comptime h: u8) type {
     return struct {
-        B: @Vector(w*h, f32), // glyph background mask
-        F: @Vector(w*h, f32), // glyph foreground mask
         BB: f32, // B dot B
         FF: f32, // F dot F
         BF: f32, // B dot F  /  F dot B
         det: f32, // FF*BB - BF*BF
 
-        pub fn solve(self: GlyphColorEqn(w, h), im_patch: patch.ImagePatch(w, h)) uni_im.UnicodePixelData {
-            const r = self.solveChannel(im_patch.r);
-            const g = self.solveChannel(im_patch.g);
-            const b = self.solveChannel(im_patch.b);
+        pub fn solve(self: GlyphColorEqn(w, h), mask: glyph.GlyphMask(w,h), im_patch: patch.ImagePatch(w, h)) uni_im.UnicodePixelData {
+            const r = self.solveChannel(mask, im_patch.r);
+            const g = self.solveChannel(mask, im_patch.g);
+            const b = self.solveChannel(mask, im_patch.b);
             return .{ .br = r.C_b, .bg = g.C_b, .bb = b.C_b, .fr = r.C_f, .fg = g.C_f, .fb = b.C_f, .codepoint = undefined};
         }
 
-        fn solveChannel(self: GlyphColorEqn(w, h), im_patch: @Vector(w*h, u8)) struct { C_b: u8, C_f: u8 } {
+        fn solveChannel(self: GlyphColorEqn(w, h), mask: glyph.GlyphMask(w,h), im_patch: @Vector(w*h, u8)) struct { C_b: u8, C_f: u8 } {
             const P: @Vector(w*h, f32) = @floatFromInt(im_patch);
-            const C_b_num = @reduce(.Add, P * self.B) * self.FF - @reduce(.Add, P * self.F) * self.BF;
-            const C_f_num = @reduce(.Add, P * self.F) * self.BB - @reduce(.Add, P * self.B) * self.BF;
+            const C_b_num = @reduce(.Add, P * mask.neg) * self.FF - @reduce(.Add, P * mask.pos) * self.BF;
+            const C_f_num = @reduce(.Add, P * mask.pos) * self.BB - @reduce(.Add, P * mask.neg) * self.BF;
             const C_b = math.clamp(C_b_num / self.det, 0, 255);
             const C_f = math.clamp(C_f_num / self.det, 0, 255);
             return .{ .C_b = @intFromFloat(C_b), .C_f = @intFromFloat(C_f) };
