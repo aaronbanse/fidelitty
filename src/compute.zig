@@ -12,28 +12,25 @@ pub const PipelineHandle = struct {
     // dimensions of output image in unicode pixels
     out_im_w: u16,
     out_im_h: u16,
-    // dimensions of each unicode pixel in virtual pixels- reasonable value for most cases is 4,4
-    pix_w: u8,
-    pix_h: u8,
-    // input_surface_w = out_im_w * pix_w
-    // input_surface_h = out_im_h * pix_h
+
     input_surface: [*]u8, // write to this
     output_surface: [*]uni_im.UnicodePixelData, // read from this
     // TODO: consider making above a UnicodeImage, compute shaders would need to write chars directly
 
     _id: Context.HandleID, // Internal: unique id to tie to vulkan resources
 
-    pub fn inputDims(self: @This()) struct { w: u32, h: u32 } {
+    // input surface dimensions is dependent on size of output image * unicode pixel size
+    pub fn inputDims(self: @This(), pix_w: u8, pix_h: u8) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, self.pix_w),
-            .h = @as(u32, self.out_im_h) * @as(u32, self.pix_h),
+            .w = @as(u32, self.out_im_w) * @as(u32, pix_w),
+            .h = @as(u32, self.out_im_h) * @as(u32, pix_h),
         };
     }
 };
 
 /// Context for accessing compute hardware
 pub const Context = struct {
-        pub const HandleID = usize;
+    pub const HandleID = usize;
 
     pub const ContextOwnershipMode = enum {
         Owned,
@@ -81,9 +78,14 @@ pub const Context = struct {
     _max_pipelines: u8,
     
     // Buffers for pipeline-global glyph set
-    _device_codepoint_buf: MemBuffer, // Unicode Codepoints
-    _device_mask_buf: MemBuffer, // Glyph Masks
-    _device_color_eqn_buf: MemBuffer, // Precomputed Color Equations
+    _device_codepoint_buf: MemBuffer, // Unicode codepoints
+    _device_mask_buf: MemBuffer, // Glyph masks
+    _device_color_eqn_buf: MemBuffer, // Precomputed values for color equations
+    
+    // Size of each unicode pixel in pixels, e.g. compression resolution
+    // Fixed on initialization since it is tied to the dimensions of glyphs in our precomputed glyph set
+    _pix_w: u8,
+    _pix_h: u8,
 
     // Command buffer for one-time upload
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
@@ -114,14 +116,16 @@ pub const Context = struct {
     pub fn init(
         self: *@This(),
         allocator: mem.Allocator,
-        comptime w: u8,
-        comptime h: u8,
-        glyph_set: algo.GlyphSetCache(w, h),
+        comptime pix_w: u8,
+        comptime pix_h: u8,
+        glyph_set: algo.GlyphSetCache(pix_w, pix_h),
         max_pipelines: u8
     ) !void {
         self.context_ownership = .Owned;
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
+        self._pix_w = pix_w;
+        self._pix_h = pix_h;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -129,7 +133,7 @@ pub const Context = struct {
         try self.createCommandPool(compute_device_indices.queue_fam_index);
         try self.createDescriptorPool(max_pipelines);
         try self.createLayouts();
-        try self.createGlyphSet(w, h, glyph_set);
+        try self.createGlyphSet(pix_w, pix_h, glyph_set);
     }
 
     // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
@@ -152,10 +156,8 @@ pub const Context = struct {
         self: *@This(),
         im_w: u16,
         im_h: u16,
-        pix_w: u8,
-        pix_h: u8
     ) !PipelineHandle {
-        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, pix_w) * @as(usize, pix_h) * @sizeOf(u8);
+        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, self._pix_w) * @as(usize, self._pix_h) * @sizeOf(u8);
         const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
 
         // initialize and allocate resources
@@ -169,8 +171,9 @@ pub const Context = struct {
         var handle: PipelineHandle = .{
             .out_im_w = im_w,
             .out_im_h = im_h,
-            .pix_w = pix_w,
-            .pix_h = pix_h,
+            .input_surface = undefined,
+            .output_surface = undefined,
+            ._id = undefined,
         };
         // map handle to input / output buffers
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
@@ -190,7 +193,7 @@ pub const Context = struct {
         return handle;
     }
 
-    pub fn executeRenderPipelines(self: @This(), pipeline_handles: []PipelineHandle) !void {
+    pub fn executeRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
         for (pipeline_handles) |handle| {
             const res: PipelineResources = self._pipelines.get(handle._id)
                 orelse return error.InvalidPipelineHandle;
@@ -199,7 +202,7 @@ pub const Context = struct {
 
             try self._device.queueSubmit(
                 self._queue,
-                &[_]vk.SubmitInfo{.{
+                1, &[_]vk.SubmitInfo{.{
                     .command_buffer_count = 1,
                     .p_command_buffers = @ptrCast(&res.cmd_buf),
                     .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
@@ -240,7 +243,9 @@ pub const Context = struct {
     fn createInstance(self: *@This()) !void {
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
-                .api_version = vk.makeApiVersion(0, 1, 3, 0),
+                .api_version = @bitCast(vk.makeApiVersion(0, 1, 3, 0)),
+                .engine_version = 0, // ignore
+                .application_version = 0, // ignore
             },
         }, null);
         self._vki = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
@@ -271,7 +276,7 @@ pub const Context = struct {
             .p_queue_create_infos = &[_]vk.DeviceQueueCreateInfo{.{
                 .queue_family_index = compute_indices.queue_fam_index,
                 .queue_count = 1,
-                .p_queue_priorities = &queue_priority,
+                .p_queue_priorities = @ptrCast(&queue_priority),
             }},
         }, null);
         self._vkd = vk.DeviceWrapper.load(device_handle, self._vki.dispatch.vkGetDeviceProcAddr.?);
@@ -393,10 +398,11 @@ pub const Context = struct {
         }, @ptrCast(&self._glyph_set_desc_set));
 
         // bind descriptors to buffers
-        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(3, &[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = self._glyph_set_desc_set,
                 .dst_binding = 0,
+                .dst_array_element = 0,
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
@@ -404,10 +410,13 @@ pub const Context = struct {
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
             },
             .{
                 .dst_set = self._glyph_set_desc_set,
                 .dst_binding = 1,
+                .dst_array_element = 0,
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
@@ -415,10 +424,13 @@ pub const Context = struct {
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
             },
             .{
                 .dst_set = self._glyph_set_desc_set,
                 .dst_binding = 2,
+                .dst_array_element = 0,
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
@@ -426,8 +438,10 @@ pub const Context = struct {
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
             },
-        }, null);
+        }, 0, &.{});
 
         // allocate buffer
         const staging_buffer = try self.allocateMemBuffer(
@@ -437,12 +451,12 @@ pub const Context = struct {
         );
 
         // map buffer to cpu pointer for memcpy
-        const staging_mem_reqs = try self._device.getBufferMemoryRequirements(staging_buffer.buf);
-        var staging_ptr_raw: ?*anyopaque = undefined;
-        try self._device.mapMemory(staging_buffer.mem, 0, staging_mem_reqs.size, .{}, &staging_ptr_raw);
+        const staging_mem_reqs = self._device.getBufferMemoryRequirements(staging_buffer.buf);
+        const staging_ptr_raw: *anyopaque = try self._device.mapMemory(staging_buffer.mem, 0, staging_mem_reqs.size, .{})
+            orelse return error.MapMemoryFailed;
 
         // cast raw to suitable types
-        const staging_ptr_codepoints: [*]u32 = @ptrCast(staging_ptr_raw);
+        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_raw));
         const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + el_num)); // offset is end of prev
         const staging_ptr_eqns: [*]algo.GlyphColorEqn(w,h) = @ptrCast(@alignCast(staging_ptr_masks + el_num)); // offset is end of prev
 
@@ -467,7 +481,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_codepoint_buf.buf,
-            &[_]vk.BufferCopy{.{
+            1, &[_]vk.BufferCopy{.{
                 .src_offset = 0,
                 .dst_offset = 0,
                 .size = self._device_codepoint_buf.size,
@@ -479,7 +493,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_mask_buf.buf,
-            &[_]vk.BufferCopy{.{
+            1, &[_]vk.BufferCopy{.{
                 .src_offset = self._device_codepoint_buf.size,
                 .dst_offset = 0,
                 .size = self._device_mask_buf.size,
@@ -491,7 +505,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_color_eqn_buf.buf,
-            &[_]vk.BufferCopy{.{
+            1, &[_]vk.BufferCopy{.{
                 .src_offset = self._device_codepoint_buf.size + self._device_mask_buf.size,
                 .dst_offset = 0,
                 .size = self._device_color_eqn_buf.size,
@@ -507,7 +521,7 @@ pub const Context = struct {
         // submit command
         try self._device.queueSubmit(
             self._queue,
-            &[_]vk.SubmitInfo{.{
+            1, &[_]vk.SubmitInfo{.{
                 .command_buffer_count = 1,
                 .p_command_buffers = @ptrCast(&self._glyph_set_upload_cmd_buf),
             }},
@@ -516,7 +530,7 @@ pub const Context = struct {
 
         // cost for waiting is minimal, simplifies logic later on with semaphores
         const timeout: u64 = 1000000;
-        _ = try self._device.waitForFences(1, &.{fence}, vk.TRUE, timeout);
+        _ = try self._device.waitForFences(1, &.{fence}, .true, timeout);
     }
 
     // Create and allocate a buffer and associated memory
@@ -526,7 +540,8 @@ pub const Context = struct {
         usage: vk.BufferUsageFlags,
         mem_props: vk.MemoryPropertyFlags
     ) !MemBuffer {
-        var mem_buf: MemBuffer = .{ .size = size };
+        var mem_buf: MemBuffer = undefined;
+        mem_buf.size = size;
         
         // create buffer
         mem_buf.buf = try self._device.createBuffer(&.{
@@ -535,7 +550,7 @@ pub const Context = struct {
             .sharing_mode = .exclusive,
         }, null);
         
-        const mem_reqs = try self._device.getBufferMemoryRequirements(mem_buf.buf);
+        const mem_reqs = self._device.getBufferMemoryRequirements(mem_buf.buf);
 
         // find suitable memory type
         const mem_type = findMemoryType(
@@ -551,7 +566,7 @@ pub const Context = struct {
         }, null);
 
         // bind buffer to memory w/ 0 offset
-        self._device.bindBufferMemory(mem_buf.buf, mem_buf.mem, 0);
+        try self._device.bindBufferMemory(mem_buf.buf, mem_buf.mem, 0);
 
         return mem_buf;
     }
@@ -635,10 +650,11 @@ pub const Context = struct {
         }, @ptrCast(&res.buf_io_desc_set));
 
         // bind I/O buffers to descriptor set
-        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 0,
+                .dst_array_element = 0,
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
@@ -646,10 +662,13 @@ pub const Context = struct {
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
             },
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 1,
+                .dst_array_element = 0,
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
@@ -657,8 +676,10 @@ pub const Context = struct {
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
             },
-        }, null);
+        }, 0, null);
     }
 
     fn createPipelineCommandBuffer(self: *@This(), res: *PipelineResources) !void {
@@ -674,7 +695,7 @@ pub const Context = struct {
 
         // copy CPU to GPU
         self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf.buf, res.device_input_buf.buf, 1, &[_]vk.BufferCopy{
-            .{ .src_offset = 0, .dest_offset = 0, .size = res.input_buf.size }
+            .{ .src_offset = 0, .dst_offset = 0, .size = res.input_buf.size }
         });
 
         // memory barrier to ensure write is complete before shader reads it
@@ -729,7 +750,7 @@ pub const Context = struct {
 
         // readback gpu - cpu
         self._device.cmdCopyBuffer(res.cmd_buf, res.device_output_buf.buf, res.output_buf.buf, 1, &[_]vk.BufferCopy{
-            .{ .src_offset = 0, .dest_offset = 0, .size = res.output_buf.size }
+            .{ .src_offset = 0, .dst_offset = 0, .size = res.output_buf.size }
         });
 
         try self._device.endCommandBuffer(res.cmd_buf);
@@ -740,7 +761,7 @@ pub const Context = struct {
 
     fn createComputePipeline(self: *@This(), res: *PipelineResources) !void {
         // create shader module
-        const shader_code = @embedFile("shader.spv");
+        const shader_code = @embedFile("shaders/bin/compute_pixel.spv");
         const shader_module = try self._device.createShaderModule(&.{
             .code_size = shader_code.len,
             .p_code = @ptrCast(@alignCast(shader_code.ptr)),
@@ -748,13 +769,14 @@ pub const Context = struct {
 
         _ = try self._device.createComputePipelines(
             .null_handle,  // pipeline cache TODO: make caching optional, save to ~/.cache
-            &[_]vk.ComputePipelineCreateInfo{.{
+            1, &[_]vk.ComputePipelineCreateInfo{.{
                 .stage = .{
                     .stage = .{ .compute_bit = true },
                     .module = shader_module,
                     .p_name = "main",  // entry point
                 },
                 .layout = self._pipeline_layout,
+                .base_pipeline_index = 0
             }},
             null,
             @ptrCast(&res.compute_pipeline),
@@ -768,14 +790,14 @@ pub const Context = struct {
         output_surface: *[*]uni_im.UnicodePixelData
     ) !void {
         // map input
-        var input_raw: ?*anyopaque = undefined;
-        try self._device.mapMemory(res.input_buf.mem, 0, res.input_buf.size, .{}, &input_raw);
-        input_surface.* = @ptrCast(input_raw);
+        const input_raw: *anyopaque = try self._device.mapMemory(res.input_buf.mem, 0, res.input_buf.size, .{})
+            orelse return error.MapMemoryFailed;
+        input_surface.* = @ptrCast(@alignCast(input_raw));
 
         // map output
-        var output_raw: ?*anyopaque = undefined;
-        try self._device.mapMemory(res.output_buf.mem, 0, res.output_buf.size, .{}, &output_raw);
-        output_surface.* = @ptrCast(output_raw);
+        const output_raw: *anyopaque = try self._device.mapMemory(res.output_buf.mem, 0, res.output_buf.size, .{})
+            orelse return error.MapMemoryFailed;
+        output_surface.* = @ptrCast(@alignCast(output_raw));
     }
 };
 
@@ -783,5 +805,5 @@ pub const Context = struct {
 extern "vulkan" fn vkGetInstanceProcAddr(
     instance: vk.Instance,
     p_name: [*:0]const u8,
-) ?vk.PfnVoidFunction;
+) vk.PfnVoidFunction;
 
