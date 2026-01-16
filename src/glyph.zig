@@ -14,7 +14,7 @@ const c = @cImport({
 pub fn getGlyphMaskSet(
     comptime w: u8,
     comptime h: u8,
-    codepoints: []u32,
+    codepoints: []const u32,
     generator: *const GlyphMaskGenerator,
     allocator: mem.Allocator
 ) ![]GlyphMask(w, h) {
