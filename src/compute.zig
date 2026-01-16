@@ -213,7 +213,7 @@ pub const Context = struct {
     }
 
     /// Note: max 32 pipelines at once
-    pub fn waitRenderPipelines(self: @This(), pipeline_handles: []PipelineHandle) !void {
+    pub fn waitRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
         const timeout: u64 = 1000000;
         var fences: [32]vk.Fence = undefined;
 
@@ -222,7 +222,7 @@ pub const Context = struct {
             fences[i] = res.pipeline_complete;
         }
 
-        _ = try self._device.waitForFences(pipeline_handles.len, @ptrCast(&fences), vk.TRUE, timeout);
+        _ = try self._device.waitForFences(@intCast(pipeline_handles.len), @ptrCast(&fences), .true, timeout);
     }
 
     // TODO: implement these
