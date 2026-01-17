@@ -243,7 +243,7 @@ pub const Context = struct {
     fn createInstance(self: *@This()) !void {
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
-                .api_version = @bitCast(vk.makeApiVersion(0, 1, 3, 0)),
+                .api_version = @bitCast(vk.makeApiVersion(0, 1, 4, 328)),
                 .engine_version = 0, // ignore
                 .application_version = 0, // ignore
             },
