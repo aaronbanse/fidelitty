@@ -68,7 +68,7 @@ float dot16(const vec4[4] a, const vec4[4] b) {
 vec2 solveChannel(const Mask mask, const ColorEquation eqn, const vec4[4] p_channel) {
   float back_color_num = dot16(mask.neg, p_channel) * eqn.pospos - dot16(mask.pos, p_channel) * eqn.negpos;
   float fore_color_num = dot16(mask.pos, p_channel) * eqn.negneg - dot16(mask.neg, p_channel) * eqn.negpos;
-  return vec2(clamp(back_color_num / eqn.determinant, 0.0, 1.0), clamp(fore_color_num / eqn.determinant, 0.0, 1.0));
+  return vec2(clamp(back_color_num / eqn.determinant, 0.0, 255.0), clamp(fore_color_num / eqn.determinant, 0.0, 255.0));
 }
 
 // We dispatch one invocation for each output pixel.
@@ -141,24 +141,14 @@ void main() {
   vec2 g_solved = solveChannel(masks[best_i], color_eqns[best_i], p.g);
   vec2 b_solved = solveChannel(masks[best_i], color_eqns[best_i], p.b);
   pixels[out_idx] = UnicodePixel(
-    uint8_t(r_solved.x * 255.0),
-    uint8_t(g_solved.x * 255.0),
-    uint8_t(b_solved.x * 255.0),
-    uint8_t(r_solved.y * 255.0),
-    uint8_t(g_solved.y * 255.0),
-    uint8_t(b_solved.y * 255.0),
+    uint8_t(r_solved.x),
+    uint8_t(g_solved.x),
+    uint8_t(b_solved.x),
+    uint8_t(r_solved.y),
+    uint8_t(g_solved.y),
+    uint8_t(b_solved.y),
     uint8_t(0), uint8_t(0), // padding
     codepoints[best_i]
   );
-  // pixels[out_idx] = UnicodePixel(
-  //   uint8_t(255),
-  //   uint8_t(255),
-  //   uint8_t(255),
-  //   uint8_t(255),
-  //   uint8_t(255),
-  //   uint8_t(255),
-  //   uint8_t(0), uint8_t(0), // padding
-  //   0x2588
-  // );
 }
 
