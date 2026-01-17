@@ -65,9 +65,9 @@ float dot16(const vec4[4] a, const vec4[4] b) {
   return dot(a[0], b[0]) + dot(a[1], b[1]) + dot(a[2], b[2]) + dot(a[3], b[3]);
 }
 
-vec2 solveChannel(const Mask mask, const ColorEquation eqn, const vec4[4] p_channel) {
-  float back_color_num = dot16(mask.neg, p_channel) * eqn.pospos - dot16(mask.pos, p_channel) * eqn.negpos;
-  float fore_color_num = dot16(mask.pos, p_channel) * eqn.negneg - dot16(mask.neg, p_channel) * eqn.negpos;
+vec2 solveChannel(const uint mask_idx, const ColorEquation eqn, const vec4[4] p_channel) {
+  float back_color_num = dot16(masks[mask_idx].neg, p_channel) * eqn.pospos - dot16(masks[mask_idx].pos, p_channel) * eqn.negpos;
+  float fore_color_num = dot16(masks[mask_idx].pos, p_channel) * eqn.negneg - dot16(masks[mask_idx].neg, p_channel) * eqn.negpos;
   return vec2(clamp(back_color_num / eqn.determinant, 0.0, 255.0), clamp(fore_color_num / eqn.determinant, 0.0, 255.0));
 }
 
@@ -115,16 +115,15 @@ void main() {
   // Compute best unicode character and pixel
   uint best_i = 0;
   float best_diff = 1000000.0;
-  for (int i = 0; i < pc.num_codepoints; i++) {
+  for (uint i = 0; i < pc.num_codepoints; i++) {
     // find optimal colors for this glyph / patch pair
-    vec2 r_solved = solveChannel(masks[i], color_eqns[i], p.r);
-    vec2 g_solved = solveChannel(masks[i], color_eqns[i], p.g);
-    vec2 b_solved = solveChannel(masks[i], color_eqns[i], p.b);
+    vec2 r_solved = solveChannel(i, color_eqns[i], p.r);
+    vec2 g_solved = solveChannel(i, color_eqns[i], p.g);
+    vec2 b_solved = solveChannel(i, color_eqns[i], p.b);
 
     // reconstruct patch using glyph neg / pos and these optimal colors
     float diff = 0;
     for (uint row = 0; row < 4; row++) {
-      // TODO: figure out element-wise subtraction + reduce op
       vec4 r_err = r_solved.x*masks[i].neg[row] + r_solved.y*masks[i].pos[row] - p.r[row];
       vec4 g_err = g_solved.x*masks[i].neg[row] + g_solved.y*masks[i].pos[row] - p.g[row];
       vec4 b_err = b_solved.x*masks[i].neg[row] + b_solved.y*masks[i].pos[row] - p.b[row];
@@ -136,10 +135,10 @@ void main() {
   }
 
   // recomputing colors for best i avoids either branching in main loop or allocating space to save all computed pixels,
-  // cheap to: require add a single computation to 500
-  vec2 r_solved = solveChannel(masks[best_i], color_eqns[best_i], p.r);
-  vec2 g_solved = solveChannel(masks[best_i], color_eqns[best_i], p.g);
-  vec2 b_solved = solveChannel(masks[best_i], color_eqns[best_i], p.b);
+  // cheap to add a single computation to 500
+  vec2 r_solved = solveChannel(best_i, color_eqns[best_i], p.r);
+  vec2 g_solved = solveChannel(best_i, color_eqns[best_i], p.g);
+  vec2 b_solved = solveChannel(best_i, color_eqns[best_i], p.b);
   pixels[out_idx] = UnicodePixel(
     uint8_t(r_solved.x),
     uint8_t(g_solved.x),
