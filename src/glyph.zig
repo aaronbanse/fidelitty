@@ -27,7 +27,8 @@ pub fn getGlyphMaskSet(
 
 /// Data structure storing a vector mask of vals in [0,1] of the positive and negative space of a glyph.
 pub fn GlyphMask(comptime w: u16, comptime h: u16) type {
-    return struct {
+    // extern to conform to C ABI since this data is pushed across CPU / GPU boundaries
+    return extern struct {
         neg: [w*h]f32,
         pos: [w*h]f32,
 
@@ -205,7 +206,8 @@ pub fn GlyphSetCache(comptime w: u8, comptime h: u8) type {
 }
 
 /// Data structure for storing parameters of the color solver eqution that are only mask-dependent
-pub const ColorEqnParams = struct {
+pub const ColorEqnParams = extern struct {
+// extern to conform to C ABI since this data is pushed across CPU / GPU boundaries
     BB: f32,  // B dot B
     FF: f32,  // F dot F
     BF: f32,  // B dot F  /  F dot B

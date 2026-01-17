@@ -80,6 +80,7 @@ pub const Context = struct {
     _device_codepoint_buf: MemBuffer, // Unicode codepoints
     _device_mask_buf: MemBuffer, // Glyph masks
     _device_color_eqn_buf: MemBuffer, // Precomputed values for color equations
+    _num_codepoints: u32,
     
     // Size of each unicode pixel in pixels, e.g. compression resolution
     // Fixed on initialization since it is tied to the dimensions of glyphs in our precomputed glyph set
@@ -179,7 +180,7 @@ pub const Context = struct {
 
         try self.createComputePipeline(&resources);
 
-        try self.createPipelineCommandBuffer(&resources);
+        try self.createPipelineCommandBuffer(&resources, im_w, im_h);
 
         // obtain unique id for handle
         var id: usize = 1;
@@ -213,7 +214,7 @@ pub const Context = struct {
 
     /// Note: max 32 pipelines at once
     pub fn waitRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
-        const timeout: u64 = 1000000;
+        const timeout: u64 = 1_000_000_000; // 1 second
         var fences: [32]vk.Fence = undefined;
 
         for (pipeline_handles, 0..) |handle, i| {
@@ -361,14 +362,18 @@ pub const Context = struct {
                 self._glyph_set_desc_layout,
                 self._io_desc_layout
             },
-            .push_constant_range_count = 0,
-            .p_push_constant_ranges = null,
+            .push_constant_range_count = 1,
+            .p_push_constant_ranges = &[_]vk.PushConstantRange{.{
+                .stage_flags = .{ .compute_bit = true },
+                .offset = 0,
+                .size = 8, // 2 x u32
+            }},
         }, null);
     }
 
     fn createGlyphSet(self: *@This(), comptime w: u8, comptime h: u8, glyph_set: glyph.GlyphSetCache(w,h)) !void {
         std.debug.assert(glyph_set.color_eqns.len == glyph_set.masks.len and glyph_set.masks.len == glyph_set.codepoints.len);
-        const el_num = glyph_set.codepoints.len;
+        self._num_codepoints = @intCast(glyph_set.codepoints.len);
 
         // allocate buffers
         self._device_codepoint_buf = try self.allocateMemBuffer(
@@ -444,7 +449,7 @@ pub const Context = struct {
 
         // allocate buffer
         const staging_buffer = try self.allocateMemBuffer(
-            el_num * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(glyph.ColorEqnParams)),
+            self._num_codepoints * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(glyph.ColorEqnParams)),
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true }
         );
@@ -456,13 +461,13 @@ pub const Context = struct {
 
         // cast raw to suitable types
         const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_raw));
-        const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + el_num)); // offset is end of prev
-        const staging_ptr_eqns: [*]glyph.ColorEqnParams = @ptrCast(@alignCast(staging_ptr_masks + el_num)); // offset is end of prev
+        const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints)); // offset is end of prev
+        const staging_ptr_eqns: [*]glyph.ColorEqnParams = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints)); // offset is end of prev
 
         // copy memory into staging buffer
-        @memcpy(staging_ptr_codepoints[0..el_num], glyph_set.codepoints[0..el_num]);
-        @memcpy(staging_ptr_masks[0..el_num], glyph_set.masks[0..el_num]);
-        @memcpy(staging_ptr_eqns[0..el_num], glyph_set.color_eqns[0..el_num]);
+        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], glyph_set.codepoints[0..self._num_codepoints]);
+        @memcpy(staging_ptr_masks[0..self._num_codepoints], glyph_set.masks[0..self._num_codepoints]);
+        @memcpy(staging_ptr_eqns[0..self._num_codepoints], glyph_set.color_eqns[0..self._num_codepoints]);
 
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
@@ -528,7 +533,7 @@ pub const Context = struct {
         );
 
         // cost for waiting is minimal, simplifies logic later on with semaphores
-        const timeout: u64 = 1000000;
+        const timeout: u64 = 1_000_000_000; // 1 second
         _ = try self._device.waitForFences(1, &.{fence}, .true, timeout);
     }
 
@@ -637,7 +642,7 @@ pub const Context = struct {
         res.output_buf = try self.allocateMemBuffer(
             output_size,
             .{ .transfer_dst_bit = true },
-            .{ .host_visible_bit = true, .host_cached_bit = true }
+            .{ .host_visible_bit = true, .host_coherent_bit = true }
         );
     }
 
@@ -681,7 +686,13 @@ pub const Context = struct {
         }, 0, null);
     }
 
-    fn createPipelineCommandBuffer(self: *@This(), res: *PipelineResources) !void {
+    // extern to conform to C ABI
+    const PushConstants = extern struct {
+        num_codepoints: u32,
+        out_im_w: u32,
+    };
+
+    fn createPipelineCommandBuffer(self: *@This(), res: *PipelineResources, im_w: u32, im_h: u32) !void {
         // allocate buffer
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
@@ -718,6 +729,21 @@ pub const Context = struct {
 
         self._device.cmdBindPipeline(res.cmd_buf, .compute, res.compute_pipeline);
 
+        // upload uniforms as push constants
+        const push = PushConstants{
+            .num_codepoints = self._num_codepoints,
+            .out_im_w = im_w,
+        };
+
+        self._device.cmdPushConstants(
+            res.cmd_buf,
+            self._pipeline_layout,
+            .{ .compute_bit = true },
+            0,
+            @sizeOf(PushConstants),
+            @ptrCast(&push),
+        );
+
         self._device.cmdBindDescriptorSets(
             res.cmd_buf,
             .compute,
@@ -726,7 +752,10 @@ pub const Context = struct {
             0, null
         );
 
-        self._device.cmdDispatch(res.cmd_buf, 0, 0, 0); // TODO: fix this once we write the shader
+        // Dispatch compute- local_size_x = 64 in glsl
+        const work_group_size: u32 = 64;
+        const num_work_groups = try std.math.divCeil(u32, im_w * im_h, work_group_size);
+        self._device.cmdDispatch(res.cmd_buf, num_work_groups, 1, 1);
 
         // memory barrier to ensure compute is complete before readback to cpu
         self._device.cmdPipelineBarrier(

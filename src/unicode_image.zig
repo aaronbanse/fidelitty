@@ -20,13 +20,15 @@ fn writeSetCursorSeq(x: u16, y: u16, buf: []u8) void {
     _=std.fmt.printInt(buf[6..], x + 1, 10, .lower, .{.fill = 48, .width = 3});
 }
 
-pub const UnicodePixelData = struct {
+// extern to conform to C ABI since this data is pushed across CPU / GPU boundaries
+pub const UnicodePixelData = extern struct {
     br: u8,
     bg: u8,
     bb: u8,
     fr: u8,
     fg: u8,
     fb: u8,
+    _pad: u16,
     codepoint: u32,
 };
 

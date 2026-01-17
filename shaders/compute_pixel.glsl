@@ -31,22 +31,27 @@ struct ColorEquation {
   float determinant;
 };
 
-// Static constants persistent across pipelines
-layout(binding = 0) uniform NumCodepoints { uint num; };
 layout(std430, set = 0, binding = 0) buffer Codepoints { uint[] codepoints; };
 layout(std430, set = 0, binding = 1) buffer Masks { Mask[] masks; };
 layout(std430, set = 0, binding = 2) buffer ColorEquations { ColorEquation[] color_eqns; };
 
-// TODO: figure out alignment & size of this
+// Size: 12
+// Alignment: 4
 struct UnicodePixel {
   uint8_t br, bg, bb, fr, fg, fb;
+  uint8_t _pad1, _pad2;
   uint codepoint;
 };
 
 // Input and output buffers
-layout(binding = 1) uniform OutImDims { uint out_im_w; };
 layout(std430, set = 1, binding = 0) buffer InputImage { uint8_t[] rgb; };
 layout(std430, set = 1, binding = 1) buffer OutputImage { UnicodePixel[] pixels; };
+
+// Constants
+layout(push_constant) uniform PushConstants {
+    uint num_codepoints;
+    uint out_im_w;
+} pc;
 
 // RGB values of a 4x4 patch of the input image. One processed per invocation
 struct Patch {
@@ -57,7 +62,7 @@ struct Patch {
 
 // dot product for vec16s represented as 4 vec4s
 float dot16(const vec4[4] a, const vec4[4] b) {
-  return dot(a[0], b[0]) + dot(a[1], b[1]) + dot(a[2], b[2]) + dot(a[2], b[3]);
+  return dot(a[0], b[0]) + dot(a[1], b[1]) + dot(a[2], b[2]) + dot(a[3], b[3]);
 }
 
 vec2 solveChannel(const Mask mask, const ColorEquation eqn, const vec4[4] p_channel) {
@@ -76,12 +81,12 @@ void main() {
 
   // Calculate indices
   const uint out_idx = gl_GlobalInvocationID.x;
-  const uint out_x = out_idx % out_im_w;
-  const uint out_y = out_idx / out_im_w;
+  const uint out_x = out_idx % pc.out_im_w;
+  const uint out_y = out_idx / pc.out_im_w;
 
   const uint in_x = out_x * 4;
   const uint in_y = out_y * 4;
-  const uint in_im_w = out_im_w * 4;
+  const uint in_im_w = pc.out_im_w * 4;
   
   // collect pixel data for patch
   Patch p;
@@ -110,7 +115,7 @@ void main() {
   // Compute best unicode character and pixel
   uint best_i = 0;
   float best_diff = 1000000.0;
-  for (int i = 0; i < num; i++) {
+  for (int i = 0; i < pc.num_codepoints; i++) {
     // find optimal colors for this glyph / patch pair
     vec2 r_solved = solveChannel(masks[i], color_eqns[i], p.r);
     vec2 g_solved = solveChannel(masks[i], color_eqns[i], p.g);
@@ -136,13 +141,24 @@ void main() {
   vec2 g_solved = solveChannel(masks[best_i], color_eqns[best_i], p.g);
   vec2 b_solved = solveChannel(masks[best_i], color_eqns[best_i], p.b);
   pixels[out_idx] = UnicodePixel(
-    uint8_t(r_solved.x),
-    uint8_t(g_solved.x),
-    uint8_t(b_solved.x),
-    uint8_t(b_solved.y),
-    uint8_t(b_solved.y),
-    uint8_t(b_solved.y),
+    uint8_t(r_solved.x * 255.0),
+    uint8_t(g_solved.x * 255.0),
+    uint8_t(b_solved.x * 255.0),
+    uint8_t(r_solved.y * 255.0),
+    uint8_t(g_solved.y * 255.0),
+    uint8_t(b_solved.y * 255.0),
+    uint8_t(0), uint8_t(0), // padding
     codepoints[best_i]
   );
+  // pixels[out_idx] = UnicodePixel(
+  //   uint8_t(255),
+  //   uint8_t(255),
+  //   uint8_t(255),
+  //   uint8_t(255),
+  //   uint8_t(255),
+  //   uint8_t(255),
+  //   uint8_t(0), uint8_t(0), // padding
+  //   0x2588
+  // );
 }
 
