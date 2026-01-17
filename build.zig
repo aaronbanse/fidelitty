@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
     const shader_cmd = b.addSystemCommand(&.{
         "glslc",
         "-fshader-stage=compute",
-        "--target-env=vulkan1.3",
+        "--target-env=vulkan1.4",
         "-o",
     });
     const shader_spv = shader_cmd.addOutputFileArg("shaders/bin/compute_pixel.spv");
