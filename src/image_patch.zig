@@ -1,3 +1,5 @@
+/// DEPRECATED ======================
+
 /// Data structure for storing a patch of an image, 
 /// for use in determining the optimal unicode character to represent it
 pub fn ImagePatch(comptime w: u8, comptime h: u8) type {

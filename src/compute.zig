@@ -4,7 +4,6 @@ const mem = std.mem;
 const vk = @import("vulkan");
 
 const uni_im = @import("unicode_image.zig");
-const algo = @import("algo.zig");
 const glyph = @import("glyph.zig");
 
 /// Non-owning handle to a render pipeline managed by compute context
@@ -118,7 +117,7 @@ pub const Context = struct {
         allocator: mem.Allocator,
         comptime pix_w: u8,
         comptime pix_h: u8,
-        glyph_set: algo.GlyphSetCache(pix_w, pix_h),
+        glyph_set: glyph.GlyphSetCache(pix_w, pix_h),
         max_pipelines: u8
     ) !void {
         self.context_ownership = .Owned;
@@ -367,7 +366,7 @@ pub const Context = struct {
         }, null);
     }
 
-    fn createGlyphSet(self: *@This(), comptime w: u8, comptime h: u8, glyph_set: algo.GlyphSetCache(w,h)) !void {
+    fn createGlyphSet(self: *@This(), comptime w: u8, comptime h: u8, glyph_set: glyph.GlyphSetCache(w,h)) !void {
         std.debug.assert(glyph_set.color_eqns.len == glyph_set.masks.len and glyph_set.masks.len == glyph_set.codepoints.len);
         const el_num = glyph_set.codepoints.len;
 
@@ -385,7 +384,7 @@ pub const Context = struct {
         );
 
         self._device_color_eqn_buf = try self.allocateMemBuffer(
-            glyph_set.color_eqns.len * @sizeOf(algo.GlyphColorEqn(w,h)),
+            glyph_set.color_eqns.len * @sizeOf(glyph.ColorEqnParams),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true }
         );
@@ -445,7 +444,7 @@ pub const Context = struct {
 
         // allocate buffer
         const staging_buffer = try self.allocateMemBuffer(
-            el_num * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(algo.GlyphColorEqn(w,h))),
+            el_num * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(glyph.ColorEqnParams)),
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true }
         );
@@ -458,7 +457,7 @@ pub const Context = struct {
         // cast raw to suitable types
         const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_raw));
         const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + el_num)); // offset is end of prev
-        const staging_ptr_eqns: [*]algo.GlyphColorEqn(w,h) = @ptrCast(@alignCast(staging_ptr_masks + el_num)); // offset is end of prev
+        const staging_ptr_eqns: [*]glyph.ColorEqnParams = @ptrCast(@alignCast(staging_ptr_masks + el_num)); // offset is end of prev
 
         // copy memory into staging buffer
         @memcpy(staging_ptr_codepoints[0..el_num], glyph_set.codepoints[0..el_num]);

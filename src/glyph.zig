@@ -10,7 +10,7 @@ const c = @cImport({
     @cInclude("stb_truetype.h");
 });
 
-// Set of glyph masks. Looped over to compute best glyph for a given patch.
+/// Returns a set of glyph masks. Looped over to compute best glyph for a given patch.
 pub fn getGlyphMaskSet(
     comptime w: u8,
     comptime h: u8,
@@ -25,11 +25,11 @@ pub fn getGlyphMaskSet(
     return set;
 }
 
-// Data structure storing a vector mask of the positive and negative space of a glyph.
+/// Data structure storing a vector mask of vals in [0,1] of the positive and negative space of a glyph.
 pub fn GlyphMask(comptime w: u16, comptime h: u16) type {
     return struct {
-        neg: @Vector(w*h, f32) = @splat(0),
-        pos: @Vector(w*h, f32) = @splat(0),
+        neg: [w*h]f32,
+        pos: [w*h]f32,
 
         pub fn generate(self: *@This(), codepoint: u32, generator: *const GlyphMaskGenerator) !void {
             try generator.generateScaled(codepoint, w, h, &self.pos);
@@ -69,7 +69,7 @@ pub const GlyphMaskGenerator = struct {
     }
 
     // Generate a glyph mask of arbitrary dimensions effectively stretched from how the glyph appears in a terminal cell.
-    pub fn generateScaled(self: GlyphMaskGenerator, codepoint: u32, comptime w: u16, comptime h: u16, mask_buf: *[w * h]f32) !void {
+    pub fn generateScaled(self: GlyphMaskGenerator, codepoint: u32, comptime w: u16, comptime h: u16, mask_buf: []f32) !void {
         // Set dims for high-res glyph mask to downsample from
         const virtual_w: u16 = w * SUPERSAMPLE;
         const virtual_h: u16 = @intFromFloat(@as(f32, @floatFromInt(w)) * self.cell_aspect * @as(f32, SUPERSAMPLE));
@@ -167,4 +167,69 @@ pub const GlyphMaskGenerator = struct {
         c.stbtt_MakeGlyphBitmap(&self.font, buf[offset..].ptr, clamped_w, clamped_h, buf_w, scale_x, scale_y, glyph_idx);
     }
 };
+
+/// Data structure for storing all data related to glyph masks, in it's simplest form for the compute kernel
+pub fn GlyphSetCache(comptime w: u8, comptime h: u8) type {
+    return struct {
+        codepoints: []const u32,
+        masks: []const GlyphMask(w, h),
+        color_eqns: []const ColorEqnParams,
+
+        /// Takes and saves a set of codepoints, allocates and generates the masks and color equation params.
+        /// Additionally allocates space to render the glyphs to, frees on completion.
+        pub fn init(self: *@This(), codepoints: []const u32, allocator: mem.Allocator) !void {
+            // copy pointer to codepoints
+            self.codepoints = codepoints;
+
+            // create mask generator
+            const glyph_mask_generator: GlyphMaskGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
+            defer glyph_mask_generator.deinit(allocator);
+
+            // generate masks
+            self.masks = try getGlyphMaskSet(w, h, codepoints, &glyph_mask_generator, allocator);
+
+            // precompute glyph color solvers
+            const color_eqns: []ColorEqnParams = try allocator.alloc(ColorEqnParams, codepoints.len);
+            for (0..codepoints.len) |n| {
+                color_eqns[n] = ColorEqnParams.compute(w, h, self.masks[n]);
+            }
+            self.color_eqns = color_eqns;
+        }
+
+        // Frees the memory backing masks and precomputed color equation params
+        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
+            allocator.free(self.masks);
+            allocator.free(self.color_eqns);
+        }
+    };
+}
+
+/// Data structure for storing parameters of the color solver eqution that are only mask-dependent
+pub const ColorEqnParams = struct {
+    BB: f32,  // B dot B
+    FF: f32,  // F dot F
+    BF: f32,  // B dot F  /  F dot B
+    det: f32, // FF*BB - BF*BF
+
+    pub fn compute(comptime w: u8, comptime h: u8, mask: GlyphMask(w,h)) ColorEqnParams {
+        const dims = w * h;
+        return .{
+            .BB = dot(dims, &mask.neg, &mask.neg),
+            .FF = dot(dims, &mask.pos, &mask.pos),
+            .BF = dot(dims, &mask.neg, &mask.pos),
+            .det = dot(dims, &mask.neg, &mask.neg) * dot(dims, &mask.pos, &mask.pos)
+                 - dot(dims, &mask.neg, &mask.pos) * dot(dims, &mask.neg, &mask.pos)
+        };
+    }
+
+    fn dot(dims: u8, a: []const f32, b: []const f32) f32 {
+        std.debug.assert(@as(usize, dims) == a.len and a.len == b.len);
+        var sum: f32 = 0;
+        for (0..dims) |n| {
+            sum += a[n] * b[n];
+        }
+        return sum;
+    }
+};
+
 

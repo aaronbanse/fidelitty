@@ -1,3 +1,4 @@
+/// DEPRECATED ==================
 const std = @import("std");
 const heap = std.heap;
 const ascii = std.ascii;

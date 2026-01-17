@@ -4,7 +4,6 @@ const posix = std.posix;
 const heap = std.heap;
 
 const glyph = @import("glyph.zig");
-const algo = @import("algo.zig");
 const uni_im = @import("unicode_image.zig");
 const term = @import("terminal_util.zig");
 const compute = @import("compute.zig");
@@ -36,7 +35,7 @@ pub fn main() !void {
     }
 
     // precompute glyph set cache
-    var glyph_set_cache: algo.GlyphSetCache(w,h) = undefined;
+    var glyph_set_cache: glyph.GlyphSetCache(w,h) = undefined;
     try glyph_set_cache.init(&codepoints, allocator);
     defer glyph_set_cache.deinit(allocator);
 
