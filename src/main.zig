@@ -37,7 +37,7 @@ pub fn main() !void {
     var img_w: u32 = undefined;
     var img_h: u32 = undefined;
     var img_chan_n: u32 = undefined;
-    const image_raw: [*]u8 = c.stbi_load(".img/IMG_3706.JPEG",
+    const image_raw: [*]u8 = c.stbi_load(".img/img.jpg",
         @ptrCast(&img_w), @ptrCast(&img_h), @ptrCast(&img_chan_n), 3);
     defer c.stbi_image_free(image_raw);
     std.debug.print("Finished.\n", .{});
