@@ -13,12 +13,6 @@ const BEGIN_SYNC_SEQ = "\x1b[?2026h"; // begin synced output and reset cursor po
 const END_SYNC_SEQ = "\x1b[?2026l"; // end synced output
 const SET_CURSOR_SEQ_TEMPLATE = "\x1b[000;000H"; // fill in 0s to set cursor position. NOTE: 1-INDEXED!!
 
-// Note- accepts 0-indexed, converts to 1-indexed. Max value is 998.
-fn writeSetCursorSeq(x: u16, y: u16, buf: []u8) void {
-    _=std.fmt.bufPrint(buf, SET_CURSOR_SEQ_TEMPLATE, .{}) catch {};
-    _=std.fmt.printInt(buf[2..], y + 1, 10, .lower, .{.fill = 48, .width = 3});
-    _=std.fmt.printInt(buf[6..], x + 1, 10, .lower, .{.fill = 48, .width = 3});
-}
 
 // extern to conform to C ABI since this data is pushed across CPU / GPU boundaries
 pub const UnicodePixelData = extern struct {
@@ -37,35 +31,51 @@ pub const UnicodeImage = struct {
     y: u16,
     width: u16,
     height: u16,
-    buf: []u8, // can be written directly
+    buf: []u8,
     
-    pub fn init(self: *@This(), alloc: mem.Allocator, x: u16, y: u16, w: u16, h: u16) !void {
+    pub fn init(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {
         self.buf = try alloc.alloc(u8, getSize(w, h));
-        self.x = x;
-        self.y = y;
+        self.x = 0;
+        self.y = 0;
         self.width = w;
         self.height = h;
         self.fillTemplate();
+        self.writeRowPositions();
     }
 
-    pub fn reinit(self: *@This(), alloc: mem.Allocator, x: u16, y: u16, w: u16, h: u16) !void {
+    pub fn resize(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {
         self.buf = try alloc.realloc(self.buf.len, getSize(w, h));
-        self.x = x;
-        self.y = y;
         self.width = w;
         self.height = h;
         self.fillTemplate();
     }
 
     pub fn deinit(self: *@This(), alloc: mem.Allocator) void {
-        self.x = 0;
-        self.y = 0;
         self.width = 0;
         self.height = 0;
         alloc.free(self.buf);
     }
 
-    pub fn writePixel(self: @This(), data: UnicodePixelData, x: u16, y: u16) void {
+    pub fn setPos(self: *@This(), x: u16, y: u16) void {
+        if (self.x == x and self.y == y) return;
+        self.x = x;
+        self.y = y;
+        self.writeRowPositions();
+    }
+
+    pub fn readPixelBuf(self: @This(), w: u16, h: u16, buf: [*]UnicodePixelData) void {
+        for (0..h) |y| {
+            for (0..w) |x| {
+                self.writePixel(buf[y * w + x], @intCast(x), @intCast(y));
+            }
+        }
+    }
+
+    pub fn draw(self: @This()) !void {
+        _ = try std.posix.write(1, self.buf);
+    }
+
+    fn writePixel(self: @This(), data: UnicodePixelData, x: u16, y: u16) void {
         const row_start_idx = BEGIN_SYNC_SEQ.len + y * getRowSize(self.width);
         const pix_index = row_start_idx + SET_CURSOR_SEQ_TEMPLATE.len + x * PIXEL_STR_TEMPLATE.len;
         u8ToString(data.br, self.buf[pix_index + 7..]); // background colors
@@ -81,44 +91,38 @@ pub const UnicodeImage = struct {
         };
     }
 
-    // convenience function for when you just want to write a pixel as a colored solid block
-    pub fn writePixelColor(self: @This(), r: u8, g: u8, b: u8, x: u16, y: u16) void {
-        self.writePixel(.{
-            .br = 0,
-            .bg = 0,
-            .bb = 0,
-            .fr = r,
-            .fg = g,
-            .fb = b,
-            .codepoint = 0x2588, // full block
-        }, @intCast(x), @intCast(y));
-    }
-
     /// Fills a template for the image with it's size and position fixed.
     /// This consists of:
     /// 1. "begin sync" esc seq, telling terminal to print all out at once.
     /// 2. For each row, a "set cursor pos" esc seq and a set of escape sequence templates (colors/codepoint not set) for each colored unicode char.
     /// 3. "end sync" esc seq, signalling end of synced output.
     fn fillTemplate(self: *@This()) void {
-        // for (0..self.buf.len) |n| {
-        //     self.buf[n] = '-';
-        // }
         _=fmt.bufPrint(self.buf, BEGIN_SYNC_SEQ, .{}) catch {};
 
-        for (0..self.height) |y_| {
-            const y: u16 = @intCast(y_);
-            const row_start_idx = BEGIN_SYNC_SEQ.len + y * getRowSize(self.width);
-            writeSetCursorSeq(self.x, self.y + y, self.buf[row_start_idx..]);
+        for (0..self.height) |row| {
+            const row_start_idx = BEGIN_SYNC_SEQ.len + row * getRowSize(self.width);
+
+            // Fill escape sequence for setting cursor pos
+            _=std.fmt.bufPrint(self.buf[row_start_idx..], SET_CURSOR_SEQ_TEMPLATE, .{}) catch {};
             const row_pixels_start_idx = row_start_idx + SET_CURSOR_SEQ_TEMPLATE.len;
-            for (0..self.width) |x_| {
-                const x: u16 = @intCast(x_);
+
+            for (0..self.width) |col| {
                 // print empty pixel string template
-                const pix_index = row_pixels_start_idx + x * PIXEL_STR_TEMPLATE.len;
+                const pix_index = row_pixels_start_idx + col * PIXEL_STR_TEMPLATE.len;
                 _=fmt.bufPrint(self.buf[pix_index..], PIXEL_STR_TEMPLATE, .{}) catch {};
             }
         }
 
         _=fmt.bufPrint(self.buf[self.buf.len - END_SYNC_SEQ.len..], END_SYNC_SEQ, .{}) catch {};
+    }
+
+    fn writeRowPositions(self: *@This()) void {
+        for (0..self.height) |row| {
+            const row_start_idx = BEGIN_SYNC_SEQ.len + row * getRowSize(self.width);
+            // don't use u8ToString here as resizing doesn't need to be performant, and x,y go up to 998
+            _=std.fmt.printInt(self.buf[row_start_idx + 2 ..], self.y + row + 1, 10, .lower, .{.fill = 48, .width = 3});
+            _=std.fmt.printInt(self.buf[row_start_idx + 6 ..], self.x + 1, 10, .lower, .{.fill = 48, .width = 3});
+        }
     }
 
     fn getRowSize(w: u16) usize {

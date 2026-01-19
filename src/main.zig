@@ -37,7 +37,7 @@ pub fn main() !void {
     var img_w: u32 = undefined;
     var img_h: u32 = undefined;
     var img_chan_n: u32 = undefined;
-    const image_raw: [*]u8 = c.stbi_load("/home/acbanse/Projects/fidelitty/.img/IMG_3706.JPEG",
+    const image_raw: [*]u8 = c.stbi_load(".img/IMG_3706.JPEG",
         @ptrCast(&img_w), @ptrCast(&img_h), @ptrCast(&img_chan_n), 3);
     defer c.stbi_image_free(image_raw);
     std.debug.print("Finished.\n", .{});
@@ -73,7 +73,9 @@ pub fn main() !void {
 
     // Init output image to fill terminal
     var out_image: uni_im.UnicodeImage = undefined;
-    try out_image.init(allocator, 0, 0, out_image_w, out_image_h);
+    try out_image.init(allocator, out_image_w, out_image_h);
+    out_image.setPos(0,0);
+    
     defer out_image.deinit(allocator);
 
     // run pipeline
@@ -82,14 +84,7 @@ pub fn main() !void {
     // wait on completion
     try compute_context.waitRenderPipelines(&.{pipeline_handle});
 
-    // write pixels to image
-    for (0..out_image_h) |y| {
-        for (0..out_image_w) |x| {
-            out_image.writePixel(pipeline_handle.output_surface[y * out_image_w + x], @intCast(x), @intCast(y));
-        }
-    }
-
-    // print image
-    _ = try posix.write(1, out_image.buf);
+    out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
+    try out_image.draw();
 }
 
