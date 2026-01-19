@@ -3,6 +3,8 @@ const mem = std.mem;
 const fs = std.fs;
 const heap = std.heap;
 const math = std.math;
+const debug = std.debug;
+const Io = std.Io;
 
 const term = @import("terminal_util.zig");
 
@@ -10,23 +12,21 @@ const c = @cImport({
     @cInclude("stb_truetype.h");
 });
 
-/// Returns a set of glyph masks. Looped over to compute best glyph for a given patch.
+/// initializes, a set of glyph masks. Looped over to compute best glyph for a given patch.
 pub fn getGlyphMaskSet(
     comptime w: u8,
     comptime h: u8,
     codepoints: []const u32,
     generator: *const GlyphMaskGenerator,
-    allocator: mem.Allocator
-) ![]GlyphMask(w, h) {
-    const set: []GlyphMask(w, h) = try allocator.alloc(GlyphMask(w, h), codepoints.len);
+    masks: []GlyphMask(w, h)
+) !void {
     for (codepoints, 0..) |codepoint, i| {
-        try set[i].generate(codepoint, generator);
+        try masks[i].generate(codepoint, generator);
     }
-    return set;
 }
 
 /// Data structure storing a vector mask of vals in [0,1] of the positive and negative space of a glyph.
-pub fn GlyphMask(comptime w: u16, comptime h: u16) type {
+pub fn GlyphMask(comptime w: u8, comptime h: u8) type {
     // extern to conform to C ABI since this data is pushed across CPU / GPU boundaries
     return extern struct {
         neg: [w*h]f32,
@@ -109,7 +109,7 @@ pub const GlyphMaskGenerator = struct {
 
     // Render a unicode character to a buffer of a fixed size.
     fn renderToBuffer(self: GlyphMaskGenerator, codepoint: u32, buf_w: u16, buf_h: u16, buf: []u8) void {
-        std.debug.assert(codepoint < math.maxInt(c_int));
+        debug.assert(codepoint < math.maxInt(c_int));
         const glyph_idx = c.stbtt_FindGlyphIndex(&self.font, @intCast(codepoint));
         if (glyph_idx == 0) return;
 
@@ -170,37 +170,29 @@ pub const GlyphMaskGenerator = struct {
 };
 
 /// Data structure for storing all data related to glyph masks, in it's simplest form for the compute kernel
-pub fn GlyphSetCache(comptime w: u8, comptime h: u8) type {
+pub fn UnicodeGlyphDataset(comptime w: u8, comptime h: u8, comptime n: u16) type {
     return struct {
-        codepoints: []const u32,
-        masks: []const GlyphMask(w, h),
-        color_eqns: []const ColorEqnParams,
+        codepoints: [n]u32,
+        masks: [n]GlyphMask(w, h),
+        color_eqns: [n]ColorEqnParams,
 
         /// Takes and saves a set of codepoints, allocates and generates the masks and color equation params.
         /// Additionally allocates space to render the glyphs to, frees on completion.
         pub fn init(self: *@This(), codepoints: []const u32, allocator: mem.Allocator) !void {
             // copy pointer to codepoints
-            self.codepoints = codepoints;
+            @memcpy(&self.codepoints, codepoints);
 
             // create mask generator
             const glyph_mask_generator: GlyphMaskGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
             defer glyph_mask_generator.deinit(allocator);
 
             // generate masks
-            self.masks = try getGlyphMaskSet(w, h, codepoints, &glyph_mask_generator, allocator);
+            try getGlyphMaskSet(w, h, codepoints, &glyph_mask_generator, &self.masks);
 
             // precompute glyph color solvers
-            const color_eqns: []ColorEqnParams = try allocator.alloc(ColorEqnParams, codepoints.len);
-            for (0..codepoints.len) |n| {
-                color_eqns[n] = ColorEqnParams.compute(w, h, self.masks[n]);
+            for (0..codepoints.len) |i| {
+                self.color_eqns[i] = ColorEqnParams.compute(w, h, self.masks[i]);
             }
-            self.color_eqns = color_eqns;
-        }
-
-        // Frees the memory backing masks and precomputed color equation params
-        pub fn deinit(self: *@This(), allocator: mem.Allocator) void {
-            allocator.free(self.masks);
-            allocator.free(self.color_eqns);
         }
     };
 }
@@ -225,7 +217,7 @@ pub const ColorEqnParams = extern struct {
     }
 
     fn dot(dims: u8, a: []const f32, b: []const f32) f32 {
-        std.debug.assert(@as(usize, dims) == a.len and a.len == b.len);
+        debug.assert(@as(usize, dims) == a.len and a.len == b.len);
         var sum: f32 = 0;
         for (0..dims) |n| {
             sum += a[n] * b[n];
@@ -233,5 +225,4 @@ pub const ColorEqnParams = extern struct {
         return sum;
     }
 };
-
 

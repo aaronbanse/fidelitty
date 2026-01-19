@@ -19,10 +19,10 @@ pub const PipelineHandle = struct {
     _id: Context.HandleID, // Internal: unique id to tie to vulkan resources
 
     // input surface dimensions is dependent on size of output image * unicode pixel size
-    pub fn inputDims(self: @This(), pix_w: u8, pix_h: u8) struct { w: u32, h: u32 } {
+    pub fn inputDims(self: @This(), patch_w: u8, patch_h: u8) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, pix_w),
-            .h = @as(u32, self.out_im_h) * @as(u32, pix_h),
+            .w = @as(u32, self.out_im_w) * @as(u32, patch_w),
+            .h = @as(u32, self.out_im_h) * @as(u32, patch_h),
         };
     }
 };
@@ -84,8 +84,8 @@ pub const Context = struct {
     
     // Size of each unicode pixel in pixels, e.g. compression resolution
     // Fixed on initialization since it is tied to the dimensions of glyphs in our precomputed glyph set
-    _pix_w: u8,
-    _pix_h: u8,
+    _patch_w: u8,
+    _patch_h: u8,
 
     // Command buffer for one-time upload
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
@@ -116,16 +116,17 @@ pub const Context = struct {
     pub fn init(
         self: *@This(),
         allocator: mem.Allocator,
-        comptime pix_w: u8,
-        comptime pix_h: u8,
-        glyph_set: glyph.GlyphSetCache(pix_w, pix_h),
+        comptime patch_w: u8,
+        comptime patch_h: u8,
+        comptime n_glyphs: u16,
+        glyph_set: *const glyph.UnicodeGlyphDataset(patch_w, patch_h, n_glyphs),
         max_pipelines: u8
     ) !void {
         self.context_ownership = .Owned;
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
-        self._pix_w = pix_w;
-        self._pix_h = pix_h;
+        self._patch_w = patch_w;
+        self._patch_h = patch_h;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -133,7 +134,7 @@ pub const Context = struct {
         try self.createCommandPool(compute_device_indices.queue_fam_index);
         try self.createDescriptorPool(max_pipelines);
         try self.createLayouts();
-        try self.createGlyphSet(pix_w, pix_h, glyph_set);
+        try self.createGlyphSet(patch_w, patch_h, n_glyphs, glyph_set);
     }
 
     // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
@@ -157,7 +158,7 @@ pub const Context = struct {
         im_w: u16,
         im_h: u16,
     ) !PipelineHandle {
-        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, self._pix_w) * @as(usize, self._pix_h) * @sizeOf(u8);
+        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, self._patch_w) * @as(usize, self._patch_h) * @sizeOf(u8);
         const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
 
         // initialize and allocate resources
@@ -226,7 +227,7 @@ pub const Context = struct {
     }
 
     // TODO: implement these
-    // pub fn resizeRenderPipeline(self: *@This(), render_pipeline: *PipelineHandle, im_w: u16, im_h: u16, pix_w: u8, pix_h: u8) !void {
+    // pub fn resizeRenderPipeline(self: *@This(), render_pipeline: *PipelineHandle, im_w: u16, im_h: u16, patch_w: u8, patch_h: u8) !void {
     //
     // }
 
@@ -371,9 +372,11 @@ pub const Context = struct {
         }, null);
     }
 
-    fn createGlyphSet(self: *@This(), comptime w: u8, comptime h: u8, glyph_set: glyph.GlyphSetCache(w,h)) !void {
-        std.debug.assert(glyph_set.color_eqns.len == glyph_set.masks.len and glyph_set.masks.len == glyph_set.codepoints.len);
-        self._num_codepoints = @intCast(glyph_set.codepoints.len);
+    fn createGlyphSet(self: *@This(),
+        comptime w: u8, comptime h: u8, comptime n: u16, 
+        glyph_set: *const glyph.UnicodeGlyphDataset(w,h,n)
+    ) !void {
+        self._num_codepoints = @intCast(n);
 
         // allocate buffers
         self._device_codepoint_buf = try self.allocateMemBuffer(
