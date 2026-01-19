@@ -45,7 +45,6 @@ pub fn build(b: *std.Build) void {
     config.addOption(u8, "patch_width", PATCH_WIDTH);
     config.addOption(u8, "patch_height", PATCH_HEIGHT);
     config.addOption(u32, "charset_size", CHARACTER_SET_SIZE);
-    config.addOption([]const u8, "charset_path", CHARACTER_SET_PATH);
     config.addOption([]const u8, "dataset_path", DATASET_PATH);
     config.addOption([]const u8, "dataset_file", DATASET_FILE_IDENTIFIER);
 
@@ -54,7 +53,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
 
 
-    // ============== gen-dataset step ===============
+    // ============== gen-dataset exe ===============
 
     // Create executable to generate and serialize the glyph dataset.
     const gen_dataset = b.addExecutable(.{
@@ -72,13 +71,14 @@ pub fn build(b: *std.Build) void {
     // Define step to generate dataset
     const run_gen = b.addRunArtifact(gen_dataset);
     const gen_step = b.step("gen-dataset", "Generate and serialize a glyph dataset for the given set of characters");
-    gen_step.dependOn(&run_gen.step);
 
     // Write set of character codepoints for generator to build
     const write_charset = b.addWriteFiles();
-    _ = write_charset.add(CHARACTER_SET_PATH, std.mem.asBytes(&codepoints));
-    gen_step.dependOn(&write_charset.step);
-        
+    const cached_charset_file = write_charset.add(CHARACTER_SET_PATH, std.mem.asBytes(&codepoints));
+
+    run_gen.addFileArg(cached_charset_file);
+    gen_step.dependOn(&run_gen.step);
+
 
     // ============= main exe (default) ==============
 

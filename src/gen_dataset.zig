@@ -13,12 +13,15 @@ pub fn main() !void {
     const patch_h = config.patch_height;
     const charset_size = config.charset_size;
     const dataset_path = config.dataset_path;
-    const charset_path = config.charset_path;
 
     // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+    const charset_path = args[1];
 
     // Open file containing all characters to use for the dataset
     var read_file = try fs.cwd().openFile(charset_path, .{ .mode = .read_only, });
