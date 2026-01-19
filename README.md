@@ -1,6 +1,39 @@
 # Fidelitty
 
-### A library for rendering images in the terminal.
+### A library to render images and stream video in the terminal
+
+This library uses zig ```0.15.2```, with C bindings available. Currently only Linux is supported.
+
+Support for Kitty, ... // TODO: figure out which ones are supported (low prio)
+
+Note that this code is in an early development phase, so expect frequent and significant changes to the API and backend.
+
+#### Features
+
+// TODO: fill out once API solidified, dependencies are factored out. 
+
+- Stable algorithm to compress image patches to background/foreground-colored unicode characters
+- 60 fps
+- May attach to existing Vulkan backend to redirect out ot the terminal, or create a standalone Vulkan instance.
+
+### Installation and building
+
+Install Zig and Vulkan, and ensure proper drivers are installed using ```lspci | grep -A 3 VGA```.
+
+Clone the repo:
+```bash
+git clone https://github.com/aaronbanse/fidelitty.git
+cd fidelitty
+```
+Generate the unicode dataset and compile main executable with dataset embedded.
+```bash
+zig build gen-dataset && zig build
+
+```
+To run: 
+```bash
+zig build run
+```
 
 #### Algorithm overview
 
@@ -23,12 +56,12 @@ But how?
 
 We need to get some help from our dear friend **linear algebra.**
 
-
+// TODO: Add the proof in latex format
 
 ### Data Sizing Conventions
 
-- Pixel color: u8
-- Unicode codepoints: u32
-- Patch-space / patch dimensions: u8
-- Image-space: u16
+- Pixel color: ```u8```
+- Unicode codepoints: ```u32```
+- Patch-space / patch dimensions: ```u8```
+- Image-space: ```u16```
 
