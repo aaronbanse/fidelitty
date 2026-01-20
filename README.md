@@ -77,33 +77,33 @@ Where $c_f, c_b$ are scalars, since we only consider one channel. For a given un
 0 = \sum_i -2B_i(P_i - c_fF_i - c_bB_i)
 ```
 ```math
-0 = -F\dot (P - c_fF - c_bB)
+0 = -F\cdot (P - c_fF - c_bB)
 ```
 ```math
-0 = -B\dot (P - c_fF - c_bB)
+0 = -B\cdot (P - c_fF - c_bB)
 ```
 Then, some algebra:
 ```math
-P\dot F = c_fF\dot F + c_bF\dot B
+P\cdot F = c_fF\cdot F + c_bF\cdot B
 ```
 ```math
-P\dot B = c_fF\dot B + c_bB\dot B
+P\cdot B = c_fF\cdot B + c_bB\cdot B
 ```
 ```math
-\begin{bmatrix} P\dot F \\ P\dot B \end{bmatrix} = \begin{bmatrix} F\dot F & F\dot B \\ F\dot B & B\dot B \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
 ```
 ```math
-\begin{bmatrix} F\dot F & F\dot B \\ F\dot B & B\dot B \end{bmatrix}^-1 \begin{bmatrix} P\dot F \\ P\dot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix}^-1 \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
 ```
 ```math
-\frac{\begin{bmatrix} B\dot B & -F\dot B \\ -F\dot B & F\dot F \end{bmatrix}}{F\dot F*B\dot B - (F\dot B)^2} \begin{bmatrix} P\dot F \\ P\dot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\frac{\begin{bmatrix} B\cdot B & -F\cdot B \\ -F\cdot B & F\cdot F \end{bmatrix}}{F\cdot F*B\cdot B - (F\cdot B)^2} \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
 ```
 
 Finally, we have an equation for the optimal $c_f,c_b$. To see how good it is, we plug these values into the first equation for D. Now that we have this metric, finding the optimal unicode pixel is as simple as looping through the full list of characters, computing this value for each channel, and picking the character-color combo with the lowest $D$.
 
 ##### Performance Optimizations
 
-Since the set of characters used for rendering is fixed, we precompute $F\dot F,B\dot B,F\dot B,$ and $F\dot F*B\dot B - (F\dot B)^2$, and bake them into the binary.
+Since the set of characters used for rendering is fixed, we precompute $F\cdot F,B\cdot B,F\cdot B,$ and $F\cdot F*B\cdot B - (F\cdot B)^2$, and bake them into the binary.
 
 The algorithm is entirely patch-local, so it is trivial to parallelize on the GPU. This library depends on Vulkan to handle compute shader dispatch, although I may switch over to a Zig-native solution, as there appear to be some good options providing more cross-platform support.
 
