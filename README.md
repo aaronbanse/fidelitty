@@ -31,7 +31,6 @@ cd fidelitty
 Generate the unicode dataset and compile main executable:
 ```bash
 zig build gen-dataset && zig build
-
 ```
 Run: 
 ```bash
@@ -57,15 +56,28 @@ The main idea of this algorithm is to render our 'virtual' image to a higher res
 
 But how? 
 
-First we construct a metric to compare how well a colored unicode character matches a given 4x4 rgb patch. Given that we can color the foreground and background, a rendered unicode character serves as a partition of a terminal cell into two colors. In particular, the unicode glyphs are rendered with anti-aliasing, and we store them in a highly compressed 4x4 array of floats in the range [0,1]. We can also derive a mask of the *negative* space of a glyph by subtracting the array from an array of all 1's.
+First we construct a metric to compare how well a unicode character matches a given 4x4 rgb patch. Given that we can color the foreground and background, a rendered unicode character serves as a partition of a terminal cell into two colors. In particular, the unicode glyphs are rendered with anti-aliasing, and we store them in a highly compressed 4x4 array of floats in the range [0,1]. We can also derive a mask of the *negative* space of a glyph by subtracting the array from an array of all 1's.
 
-We store patches as flat vectors, since the position of pixels is only relevant for pointwise comparison. For comparison, we define a *Unicode Pixel* as foreground and background colors $C_f, C_b$, and foreground and background mask vectors $F, B$ with each $F_i,B_i \in [0,1]$.
+We store patches as flat vectors, since the position of pixels is only relevant for pointwise comparison. For comparison, we define a *Unicode Pixel* as foreground and background colors $C_f, C_b$, and foreground and background mask vectors $F, B$ with each $F_i,B_i \in [0,1]$. We define a *Image Patch* as a set of 3 vectors $P_r,P_g,P_b$.
 
-We need to get some help from our dear friend **linear algebra.**
+This algorithm considers each color channel individually, and so the remainder of this section will present the metric to compare the difference between the Unicode Pixel and the Image Patch *over one channel*, $P$.
 
-First we mu
+We will measure the difference $D$ using mean squared error (MSE):
+$$
+D = (P - c_fF - c_bB)^2
+$
+Where $c_f, c_b$ are scalars, since we only consider one channel. For a given unicode character and patch, the glyph masks are fixed, so we want to find the values of $c_f$ and $c_b$ that minimize $D$. We find where the partial derivative of $c_f$ and $c_b$ are $0$:
+$$
+0 = -2F(P - c_fF - c_bB)
+0 = -2B(P - c_fF - c_bB)
+$$
+Then, some algebra:
+$$
+PF = c_fFF + c_bFB
+PB = c_fFB + c_bBB
 
-// TODO: Add the proof in latex format
+\begin{bmatrix} PF \\ PB \end{bmatrix}
+$$
 
 ### Data Sizing Conventions
 
