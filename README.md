@@ -65,23 +65,29 @@ This algorithm considers each color channel individually, and so the remainder o
 We will measure the difference $D$ using mean squared error (MSE):
 
 $$
-D = (P - c_fF - c_bB)^2
+D = \sum_i (P_i - c_fF_i - c_bB_i)^2
 $$
 
 Where $c_f, c_b$ are scalars, since we only consider one channel. For a given unicode character and patch, the glyph masks are fixed, so we want to find the values of $c_f$ and $c_b$ that minimize $D$. We find where the partial derivative of $c_f$ and $c_b$ are $0$:
 
 $$
-0 = -2F(P - c_fF - c_bB)
-0 = -2B(P - c_fF - c_bB)
+0 = \sum_i -2F_i(P_i - c_fF_i - c_bB_i)
+
+0 = \sum_i -2B_i(P_i - c_fF_i - c_bB_i)
+
+0 = -F(P - c_fF - c_bB)
+
+0 = -B(P - c_fF - c_bB)
 $$
 
 Then, some algebra:
 
 $$
 PF = c_fFF + c_bFB
+
 PB = c_fFB + c_bBB
 
-\begin{bmatrix} PF \\ PB \end{bmatrix}
+\begin{bmatrix} PF \\ PB \end{bmatrix} = \begin{bmatrix} FF & FB \\ FB & BB \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
 $$
 
 ### Data Sizing Conventions
