@@ -137,18 +137,16 @@ pub const Context = struct {
         try self.createGlyphSet(patch_w, patch_h, n_glyphs, glyph_set);
     }
 
+    // TODO: FINISH IMPLEMENTING STUB
     // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
     pub fn initFromExisting(self: *@This(), allocator: mem.Allocator) !void {
         self.context_ownership = .Borrowed;
         self._pipelines = .init(allocator);
-        // TODO: implement
     }
 
     // Cleanup resources
     pub fn deinit(self: *@This()) void {
         self._pipelines.deinit();
-        // if owned, deinit everything, if borrowed, deinit pipelines and buffers only
-        // TODO: implement
     }
 
     // Context manages memory
@@ -167,7 +165,6 @@ pub const Context = struct {
 
         try self.createDescriptorSets(&resources);
 
-// create handle mapped to input / output buffersTo run code, enable code execution and file creation in Settings > Capabilities.Claude is AI and can make mistakes. Please double-check responses.
         // create handle mapped to input / output buffers
         var handle: PipelineHandle = .{
             .out_im_w = im_w,
@@ -213,7 +210,6 @@ pub const Context = struct {
         }
     }
 
-    /// Note: max 32 pipelines at once
     pub fn waitRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
         var fences: [32]vk.Fence = undefined;
