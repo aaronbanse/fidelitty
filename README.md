@@ -6,7 +6,7 @@ This library uses zig ```0.15.2```, with C bindings available. Currently only Li
 
 Support for Kitty, ... // TODO: figure out which ones are supported (low prio)
 
-Note that this code is in an early development phase, so expect frequent and significant changes to the API and backend.
+Note that this code is in early development, so expect frequent and significant changes to the API and backend.
 
 #### Features
 
@@ -15,24 +15,25 @@ Note that this code is in an early development phase, so expect frequent and sig
 - Stable algorithm to compress image patches to background/foreground-colored unicode characters
 - 60 fps
 - May attach to existing Vulkan backend to redirect out ot the terminal, or create a standalone Vulkan instance.
+- Customize algorithm features, like the subset of unicode characters to use, at build time. The dataset will be computed and baked into the binary for performance.
 
 // Major TODO: allow dynamic font checking and caching of baked binary
 
 #### Installation and building
 
-Install Zig and Vulkan, and ensure proper drivers are installed using ```lspci | grep -A 3 VGA```.
+Install Zig and Vulkan, and ensure proper graphics drivers are installed using something like ```lspci | grep -A 3 VGA```.
 
 Clone the repo:
 ```bash
 git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
-Generate the unicode dataset and compile main executable with dataset embedded.
+Generate the unicode dataset and compile main executable:
 ```bash
 zig build gen-dataset && zig build
 
 ```
-To run: 
+Run: 
 ```bash
 zig build run
 ```
@@ -56,7 +57,13 @@ The main idea of this algorithm is to render our 'virtual' image to a higher res
 
 But how? 
 
+First we construct a metric to compare how well a colored unicode character matches a given 4x4 rgb patch. Given that we can color the foreground and background, a rendered unicode character serves as a partition of a terminal cell into two colors. In particular, the unicode glyphs are rendered with anti-aliasing, and we store them in a highly compressed 4x4 array of floats in the range [0,1]. We can also derive a mask of the *negative* space of a glyph by subtracting the array from an array of all 1's.
+
+We store patches as flat vectors, since the position of pixels is only relevant for pointwise comparison. For comparison, we define a *Unicode Pixel* as foreground and background colors $C_f, C_b$, and foreground and background mask vectors $F, B$ with each $F_i,B_i \in [0,1]$.
+
 We need to get some help from our dear friend **linear algebra.**
+
+First we mu
 
 // TODO: Add the proof in latex format
 
