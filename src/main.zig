@@ -78,13 +78,16 @@ pub fn main() !void {
     
     defer out_image.deinit(allocator);
 
-    // run pipeline
-    try compute_context.executeRenderPipelines(&.{pipeline_handle});
+    const num_runs = 1;
+    for (0..num_runs) |_| {
+        // run pipeline
+        try compute_context.executeRenderPipelines(&.{pipeline_handle});
 
-    // wait on completion
-    try compute_context.waitRenderPipelines(&.{pipeline_handle});
+        // wait on completion
+        try compute_context.waitRenderPipelines(&.{pipeline_handle});
 
-    out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
-    try out_image.draw();
+        out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
+        try out_image.draw();
+    }
 }
 

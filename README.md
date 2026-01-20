@@ -16,7 +16,9 @@ Note that this code is in an early development phase, so expect frequent and sig
 - 60 fps
 - May attach to existing Vulkan backend to redirect out ot the terminal, or create a standalone Vulkan instance.
 
-### Installation and building
+// Major TODO: allow dynamic font checking and caching of baked binary
+
+#### Installation and building
 
 Install Zig and Vulkan, and ensure proper drivers are installed using ```lspci | grep -A 3 VGA```.
 
