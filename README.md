@@ -77,21 +77,35 @@ Where $c_f, c_b$ are scalars, since we only consider one channel. For a given un
 0 = \sum_i -2B_i(P_i - c_fF_i - c_bB_i)
 ```
 ```math
-0 = -F(P - c_fF - c_bB)
+0 = -F\dot(P - c_fF - c_bB)
 ```
 ```math
-0 = -B(P - c_fF - c_bB)
+0 = -B\dot(P - c_fF - c_bB)
 ```
 Then, some algebra:
 ```math
-PF = c_fFF + c_bFB
+P\dotF = c_fF\dotF + c_bF\dotB
 ```
 ```math
-PB = c_fFB + c_bBB
+P\dotB = c_fF\dotB + c_bB\dotB
 ```
 ```math
-\begin{bmatrix} PF \\ PB \end{bmatrix} = \begin{bmatrix} FF & FB \\ FB & BB \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} P\dotF \\ P\dotB \end{bmatrix} = \begin{bmatrix} F\dotF & F\dotB \\ F\dotB & B\dotB \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
 ```
+```math
+\begin{bmatrix} F\dotF & F\dotB \\ F\dotB & B\dotB \end{bmatrix}^-1 \begin{bmatrix} P\dotF \\ P\dotB \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+```
+```math
+\frac{\begin{bmatrix} B\dotB & -F\dotB \\ -F\dotB & F\dotF \end{bmatrix}}{F\dotF*B\dotB - (F\dotB)^2} \begin{bmatrix} P\dotF \\ P\dotB \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+```
+
+Finally, we have an equation for the optimal $c_f,c_b$. To see how good it is, we plug these values into the first equation for D. Now that we have this metric, finding the optimal unicode pixel is as simple as looping through the full list of characters, computing this value for each channel, and picking the character-color combo with the lowest $D$.
+
+##### Performance Optimizations
+
+Since the set of characters used for rendering is fixed, we precompute $F\dotF,B\dotB,F\dotB,$ and $F\dotF*B\dotB - (F\dotB)^2$, and bake them into the binary.
+
+The algorithm is entirely patch-local, so it is trivial to parallelize on the GPU. This library depends on Vulkan to handle compute shader dispatch, although I may switch over to a Zig-native solution, as there appear to be some good options providing more cross-platform support.
 
 ### Data Sizing Conventions
 
