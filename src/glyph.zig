@@ -6,6 +6,8 @@ const math = std.math;
 const debug = std.debug;
 const Io = std.Io;
 
+const config = @import("config");
+
 const term = @import("terminal_util.zig");
 
 const c = @cImport({
@@ -183,7 +185,7 @@ pub fn UnicodeGlyphDataset(comptime w: u8, comptime h: u8, comptime n: u16) type
             @memcpy(&self.codepoints, codepoints);
 
             // create mask generator
-            const glyph_mask_generator: GlyphMaskGenerator = try .init(allocator, "Adwaita/AdwaitaMono-Regular.ttf");
+            const glyph_mask_generator: GlyphMaskGenerator = try .init(allocator, config.font_path);
             defer glyph_mask_generator.deinit(allocator);
 
             // generate masks

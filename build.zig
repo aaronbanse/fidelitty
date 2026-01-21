@@ -37,6 +37,9 @@ pub fn build(b: *std.Build) void {
     // File identifier used to embed the dataset into the binary
     const DATASET_FILE_IDENTIFIER = "glyph-dataset";
 
+    // Font path from root /usr/share/fonts/
+    const FONT_PATH = "Adwaita/AdwaitaMono-Regular.ttf";
+
     // BUILT-IN - modify at your own risk
     // ==================================
 
@@ -47,6 +50,7 @@ pub fn build(b: *std.Build) void {
     config.addOption(u32, "charset_size", CHARACTER_SET_SIZE);
     config.addOption([]const u8, "dataset_path", DATASET_PATH);
     config.addOption([]const u8, "dataset_file", DATASET_FILE_IDENTIFIER);
+    config.addOption([]const u8, "font_path", FONT_PATH);
 
     // Defaults
     const optimize = b.standardOptimizeOption(.{});
