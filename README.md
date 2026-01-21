@@ -6,7 +6,7 @@ This library uses zig ```0.15.2```, with C bindings coming soon. Currently only 
 
 *Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
 
-Note that this code is in early development, so expect frequent and significant changes to the API and backend.
+*Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
 #### Features
 
