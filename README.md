@@ -2,22 +2,22 @@
 
 ### A library to render images and stream video in the terminal
 
-This library uses zig ```0.15.2```, with C bindings available. Currently only Linux is supported.
+This library uses zig ```0.15.2```, with C bindings coming soon. Currently only Linux is supported.
 
-Support for Kitty, ... // TODO: figure out which ones are supported (low prio)
+*Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
 
-Note that this code is in early development, so expect frequent and significant changes to the API and backend.
+*Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
 #### Features
 
-// TODO: fill out once API solidified, dependencies are factored out. 
-
-- Stable algorithm to compress image patches to background/foreground-colored unicode characters
-- 60 fps
+- Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
+- 60 fps (works on my machine)
 - May attach to existing Vulkan backend to redirect out ot the terminal, or create a standalone Vulkan instance.
 - Customize algorithm features, like the subset of unicode characters to use, at build time. The dataset will be computed and baked into the binary for performance.
 
-// Major TODO: allow dynamic font checking and caching of baked binary
+#### Limitations
+
+- Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
 
 #### Installation and building
 
