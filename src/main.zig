@@ -74,9 +74,12 @@ pub fn main() !void {
     // Init output image to fill terminal
     var out_image: uni_im.UnicodeImage = undefined;
     try out_image.init(allocator, out_image_w, out_image_h);
-    out_image.setPos(0,0);
-    
     defer out_image.deinit(allocator);
+
+    // reserve space on the screen for our image to avoid overwriting
+    try term.reserveVerticalSpace(out_image.height);
+    const cursor_pos = try term.getCursorPos();
+    out_image.setPos(cursor_pos.col, cursor_pos.row);
 
     const num_runs = 1;
     for (0..num_runs) |_| {
