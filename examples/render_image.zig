@@ -43,7 +43,7 @@ pub fn main() !void {
     const out_image_h: u16 = term_dims.rows;
     const out_image_w: u16 = @intFromFloat(@as(f32, @floatFromInt(term_dims.rows * term_dims.cell_h)) // new_h
         * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.cell_w))); // old_w / old_h
-    const pipeline_handle = try compute_context.createRenderPipeline(out_image_w, out_image_h);
+    var pipeline_handle = try compute_context.createRenderPipeline(out_image_w, out_image_h);
 
     // get ratio of image size to expected input size (out image size * patch size)
     const exp_input_w: usize = @as(usize, out_image_w) * @as(usize, patch_w);
@@ -71,18 +71,56 @@ pub fn main() !void {
 
     // reserve space on the screen for our image to avoid overwriting
     try ftty.terminal.reserveVerticalSpace(out_image.height);
-    const cursor_pos = try ftty.terminal.getCursorPos();
+    var cursor_pos = try ftty.terminal.getCursorPos();
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
-    const num_runs = 1; // you can play around with num_runs to see how fast it can run the pipeline
-    for (0..num_runs) |_| {
-        // run pipeline
-        try compute_context.executeRenderPipelines(&.{pipeline_handle});
+    // run pipeline
+    try compute_context.executeRenderPipelines(&.{pipeline_handle});
 
-        // wait on completion
-        try compute_context.waitRenderPipelines(&.{pipeline_handle});
+    // wait on completion
+    try compute_context.waitRenderPipelines(&.{pipeline_handle});
 
-        out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
-        try out_image.draw();
+    out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
+    try out_image.draw();
+
+    // resize and reposition the image to overlap the other image
+    const out_image_w_small = out_image_w / 2;
+    const out_image_h_small = out_image_h / 2;
+    try ftty.terminal.reserveVerticalSpace(out_image_h_small);
+    cursor_pos = try ftty.terminal.getCursorPos();
+    out_image.setPos(cursor_pos.col + 90, cursor_pos.row - 20);
+    try out_image.resize(allocator, out_image_w_small, out_image_h_small);
+
+    // resize the pipeline - will be tied to the image in the future
+    try compute_context.resizeRenderPipeline(&pipeline_handle, out_image_w_small, out_image_h_small);
+
+    // read in data for smaller image
+    // get ratio of image size to expected input size (out image size * patch size)
+    const exp_input_w_small: usize = @as(usize, out_image_w_small) * @as(usize, patch_w);
+    const exp_input_h_small: usize = @as(usize, out_image_h_small) * @as(usize, patch_h);
+    const x_rat_small: f32 = @as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(exp_input_w_small));
+    const y_rat_small: f32 = @as(f32, @floatFromInt(img_h)) / @as(f32, @floatFromInt(exp_input_h_small));
+
+    // sample from image to input surface
+    for (0..exp_input_h_small) |y| {
+        for (0..exp_input_w_small) |x| {
+            const img_x: usize = @intFromFloat(@as(f32, @floatFromInt(x)) * x_rat_small);
+            const img_y: usize = @intFromFloat(@as(f32, @floatFromInt(y)) * y_rat_small);
+            const src_idx = (img_y * img_w + img_x) * 3;
+            const dst_idx = (y * exp_input_w_small + x) * 3;
+            pipeline_handle.input_surface[dst_idx + 0] = image_raw[src_idx + 0];
+            pipeline_handle.input_surface[dst_idx + 1] = image_raw[src_idx + 1];
+            pipeline_handle.input_surface[dst_idx + 2] = image_raw[src_idx + 2];
+        }
     }
+
+    // run pipeline
+    try compute_context.executeRenderPipelines(&.{pipeline_handle});
+
+    // wait on completion
+    try compute_context.waitRenderPipelines(&.{pipeline_handle});
+
+    // render
+    out_image.readPixelBuf(out_image_w_small, out_image_h_small, pipeline_handle.output_surface);
+    try out_image.draw();
 }
