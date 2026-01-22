@@ -21,7 +21,7 @@ const dataset_config_ = @import("dataset_config");
 // As a consequence, the user is responsible for calling init / deinit / resize methods on the image,
 // in concert with the associated Context methods for managing render pipelines. 
 //
-// In the future, this will be changed so that a render pipeline outputs a unicode image directly,
+// In the future, this will be changed so that a render pipeline outputs a UnicodeImage directly,
 // and will tie the operations for managing resources together.
 // This will allow us to remove UnicodePixelData from the API.
 //
