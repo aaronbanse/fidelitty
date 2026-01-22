@@ -7,7 +7,8 @@
         "src/external",
         "shaders",
         "build.zig",
-        "build.zig.zon"
+        "build.zig.zon",
+        "vk.xml"
     },
     .dependencies = .{
         .vulkan_zig = .{
