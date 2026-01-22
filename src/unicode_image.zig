@@ -44,7 +44,7 @@ pub const UnicodeImage = struct {
     }
 
     pub fn resize(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {
-        self.buf = try alloc.realloc(self.buf.len, getSize(w, h));
+        self.buf = try alloc.realloc(self.buf, getSize(w, h));
         self.width = w;
         self.height = h;
         self.fillTemplate();
