@@ -12,30 +12,45 @@ This library uses zig ```0.15.2```, with C bindings coming soon. Currently only 
 
 - Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
 - 60 fps (works on my machine)
-- May attach to existing Vulkan backend to redirect out ot the terminal, or create a standalone Vulkan instance.
 - Customize algorithm features, like the subset of unicode characters to use, at build time. The dataset will be computed and baked into the binary for performance.
 
 #### Limitations
 
 - Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
+- No way to compile as a shared library and link with a C header just yet.
+- No way to attach to an existing Vulkan instance just yet, must create a standalone context and transfer data over the cpu.
 
 #### Installation and building
-
-Install Zig and Vulkan, and ensure proper graphics drivers are installed using something like ```lspci | grep -A 3 VGA```.
+Install Zig `0.15.2` and Vulkan, and ensure proper graphics drivers are installed.
 
 Clone the repo:
 ```bash
 git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
-Generate the unicode dataset and compile main executable:
+
+Set your terminal font in `build.zig` (search for `FONT_PATH`), then generate the glyph dataset and build:
 ```bash
 zig build gen-dataset && zig build
 ```
-Run: 
+
+Run the example:
 ```bash
-zig build run
+zig build run-img-ex
 ```
+
+To use as a library, add fidelitty as a dependency in your `build.zig.zon`, or have zig fetch it automatically:
+```bash
+# in project root
+zig fetch --save https://github.com/aaronbanse/fidelitty.git
+```
+
+And, in your `build.zig`, link the Vulkan library to your executable:
+```zig
+exe.linkSystemLibrary("vulkan");
+```
+
+It is not necessary to link libc in this way, as Zig supports transitive libc linking through included modules.
 
 #### Algorithm overview
 
