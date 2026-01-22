@@ -155,7 +155,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(img_exe);
 
     const run_exe = b.addRunArtifact(img_exe);
-    const run_step = b.step("run", "Run the application");
+    const run_step = b.step("run-img-ex", "Run the application");
     run_step.dependOn(&run_exe.step);
 }
 
