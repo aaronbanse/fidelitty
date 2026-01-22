@@ -154,8 +154,8 @@ pub fn build(b: *std.Build) void {
     // Install binary to zig-out
     b.installArtifact(img_exe);
 
-    // Optionally run
     const run_exe = b.addRunArtifact(img_exe);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
 }
+
