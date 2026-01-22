@@ -4,12 +4,7 @@ const posix = std.posix;
 const heap = std.heap;
 const mem = std.mem;
 
-const config = @import("config");
-
-const glyph = @import("glyph.zig");
-const uni_im = @import("unicode_image.zig");
-const term = @import("terminal_util.zig");
-const compute = @import("compute.zig");
+const ftty = @import("fidelitty");
 
 const c = @cImport({
     @cInclude("stb_image.h");
@@ -17,21 +12,14 @@ const c = @cImport({
 
 pub fn main() !void {
     // Config constants
-    const patch_w = config.patch_width; // patch width
-    const patch_h = config.patch_height; // patch height
-    const charset_size = config.charset_size;
-    const dataset_file = config.dataset_file;
+    const patch_w = ftty.dataset_config.patch_width;
+    const patch_h = ftty.dataset_config.patch_height;
 
     // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
 
-    // Load unicode glyph dataset from embedded data
-    const dataset_raw = @embedFile(dataset_file);
-    var dataset: glyph.UnicodeGlyphDataset(patch_w, patch_h, charset_size) = undefined;
-    @memcpy(mem.asBytes(&dataset), dataset_raw);
-    
     // load image from disk
     std.debug.print("Loading image... ", .{});
     var img_w: u32 = undefined;
@@ -43,12 +31,12 @@ pub fn main() !void {
     std.debug.print("Finished.\n", .{});
 
     // initialize compute context
-    var compute_context: compute.Context = undefined;
-    try compute_context.init(allocator, patch_w, patch_h, charset_size, &dataset, 8);
+    var compute_context: ftty.ComputeContext = undefined;
+    try compute_context.init(allocator, 8);
     defer compute_context.deinit();
 
     // create a render pipeline
-    const term_dims = term.getDims();
+    const term_dims = ftty.terminal.getDims();
     const out_image_h: u16 = term_dims.rows;
     const out_image_w: u16 = @intFromFloat(@as(f32, @floatFromInt(term_dims.rows * term_dims.cell_h)) // new_h
         * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.cell_w))); // old_w / old_h
@@ -59,6 +47,8 @@ pub fn main() !void {
     const exp_input_h: usize = @as(usize, out_image_h) * @as(usize, patch_h);
     const x_rat: f32 = @as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(exp_input_w));
     const y_rat: f32 = @as(f32, @floatFromInt(img_h)) / @as(f32, @floatFromInt(exp_input_h));
+
+    // sample from image to input surface
     for (0..exp_input_h) |y| {
         for (0..exp_input_w) |x| {
             const img_x: usize = @intFromFloat(@as(f32, @floatFromInt(x)) * x_rat);
@@ -72,13 +62,13 @@ pub fn main() !void {
     }
 
     // Init output image to fill terminal
-    var out_image: uni_im.UnicodeImage = undefined;
+    var out_image: ftty.UnicodeImage = undefined;
     try out_image.init(allocator, out_image_w, out_image_h);
     defer out_image.deinit(allocator);
 
     // reserve space on the screen for our image to avoid overwriting
-    try term.reserveVerticalSpace(out_image.height);
-    const cursor_pos = try term.getCursorPos();
+    try ftty.terminal.reserveVerticalSpace(out_image.height);
+    const cursor_pos = try ftty.terminal.getCursorPos();
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
     const num_runs = 1;
@@ -93,4 +83,3 @@ pub fn main() !void {
         try out_image.draw();
     }
 }
-

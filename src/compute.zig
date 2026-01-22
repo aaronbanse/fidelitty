@@ -3,6 +3,9 @@ const mem = std.mem;
 
 const vk = @import("vulkan");
 
+const gen_config = @import("gen_config");
+const dataset_config = @import("dataset_config");
+
 const uni_im = @import("unicode_image.zig");
 const glyph = @import("glyph.zig");
 
@@ -116,17 +119,13 @@ pub const Context = struct {
     pub fn init(
         self: *@This(),
         allocator: mem.Allocator,
-        comptime patch_w: u8,
-        comptime patch_h: u8,
-        comptime n_glyphs: u16,
-        glyph_set: *const glyph.UnicodeGlyphDataset(patch_w, patch_h, n_glyphs),
         max_pipelines: u8
     ) !void {
         self.context_ownership = .Owned;
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
-        self._patch_w = patch_w;
-        self._patch_h = patch_h;
+        self._patch_w = dataset_config.patch_width;
+        self._patch_h = dataset_config.patch_height;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -134,9 +133,13 @@ pub const Context = struct {
         try self.createCommandPool(compute_device_indices.queue_fam_index);
         try self.createDescriptorPool(max_pipelines);
         try self.createLayouts();
-        try self.createGlyphSet(patch_w, patch_h, n_glyphs, glyph_set);
-    }
 
+        // load glyph dataset to gpu
+        const dataset_raw = @embedFile(gen_config.dataset_file);
+        var dataset: glyph.UnicodeGlyphDataset(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size) = undefined;
+        @memcpy(mem.asBytes(&dataset), dataset_raw);
+        try self.createGlyphSet(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size, &dataset);
+    }
     // TODO: FINISH IMPLEMENTING STUB
     // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
     pub fn initFromExisting(self: *@This(), allocator: mem.Allocator) !void {

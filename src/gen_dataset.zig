@@ -3,16 +3,17 @@ const heap = std.heap;
 const fs = std.fs;
 const mem = std.mem;
 
-const config = @import("config");
+const gen_config = @import("gen_config");
+const dataset_config = @import("dataset_config");
 
 const glyph = @import("glyph.zig");
 
 pub fn main() !void {
-    // Configuration
-    const patch_w = config.patch_width;
-    const patch_h = config.patch_height;
-    const charset_size = config.charset_size;
-    const dataset_path = config.dataset_path;
+    // Configuration constants
+    const patch_w = dataset_config.patch_width;
+    const patch_h = dataset_config.patch_height;
+    const charset_size = dataset_config.charset_size;
+    const dataset_path = gen_config.dataset_path;
 
     // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;

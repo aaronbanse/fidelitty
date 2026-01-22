@@ -1,6 +1,6 @@
 # Fidelitty
 
-### A library to render images and stream video in the terminal
+### A library for high performance rendering in the terminal using unicode characters and escape sequences
 
 This library uses zig ```0.15.2```, with C bindings coming soon. Currently only Linux is supported.
 

@@ -40,17 +40,21 @@ pub fn build(b: *std.Build) void {
     // Font path from root /usr/share/fonts/
     const FONT_PATH = "Adwaita/AdwaitaMono-Regular.ttf";
 
+
     // BUILT-IN - modify at your own risk
     // ==================================
 
-    // Configure constants for gen_dataset and main
-    const config = b.addOptions();
-    config.addOption(u8, "patch_width", PATCH_WIDTH);
-    config.addOption(u8, "patch_height", PATCH_HEIGHT);
-    config.addOption(u32, "charset_size", CHARACTER_SET_SIZE);
-    config.addOption([]const u8, "dataset_path", DATASET_PATH);
-    config.addOption([]const u8, "dataset_file", DATASET_FILE_IDENTIFIER);
-    config.addOption([]const u8, "font_path", FONT_PATH);
+    // Configure dataset parameters
+    const dataset_config = b.addOptions();
+    dataset_config.addOption(u8, "patch_width", PATCH_WIDTH);
+    dataset_config.addOption(u8, "patch_height", PATCH_HEIGHT);
+    dataset_config.addOption(u32, "charset_size", CHARACTER_SET_SIZE);
+    dataset_config.addOption([]const u8, "font_path", FONT_PATH);
+
+    // Comptime constants for dataset generation
+    const gen_config = b.addOptions();
+    gen_config.addOption([]const u8, "dataset_path", DATASET_PATH);
+    gen_config.addOption([]const u8, "dataset_file", DATASET_FILE_IDENTIFIER);
 
     // Defaults
     const optimize = b.standardOptimizeOption(.{});
@@ -67,7 +71,8 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
         }),
     });
-    gen_dataset.root_module.addOptions("config", config);
+    gen_dataset.root_module.addOptions("dataset_config", dataset_config);
+    gen_dataset.root_module.addOptions("gen_config", gen_config);
     gen_dataset.addIncludePath(b.path("src/external"));
     gen_dataset.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
     gen_dataset.linkLibC();
@@ -84,21 +89,20 @@ pub fn build(b: *std.Build) void {
     gen_step.dependOn(&run_gen.step);
 
 
-    // ============= main exe (default) ==============
+    // ============= root module ==============
 
-    // Create main executable
-    const exe = b.addExecutable(.{
-        .name = "fidelitty",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+    // Create library
+    const lib = b.addModule("fidelitty", .{
+        .target = target,
+        .optimize = optimize,
+        .root_source_file = b.path("fidelitty.zig"),
+        .link_libc = true,
     });
-    exe.root_module.addOptions("config", config);
+    lib.addOptions("dataset_config", dataset_config);
+    lib.addOptions("gen_config", gen_config);
     
     // Allow embedding of dataset into binary
-    exe.root_module.addAnonymousImport(DATASET_FILE_IDENTIFIER, .{
+    lib.addAnonymousImport(DATASET_FILE_IDENTIFIER, .{
         .root_source_file = b.path(DATASET_PATH)
     });
 
@@ -111,30 +115,47 @@ pub fn build(b: *std.Build) void {
     });
     const shader_spv = shader_cmd.addOutputFileArg("shaders/bin/compute_pixel.spv");
     shader_cmd.addFileArg(b.path("shaders/compute_pixel.glsl"));
-    exe.root_module.addAnonymousImport("shaders/bin/compute_pixel.spv", .{
+    lib.addAnonymousImport("shaders/bin/compute_pixel.spv", .{
         .root_source_file = shader_spv
     });
 
-    // Compile stb headers and link LibC
-    exe.root_module.addIncludePath(b.path("src/external/"));
-    exe.root_module.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
-    exe.root_module.addCSourceFile(.{.file=b.path("src/external/stb_image_impl.c")});
-    exe.linkLibC();
+    // Compile stb_truetype
+    lib.addIncludePath(b.path("src/external/"));
+    lib.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
 
     // Add vulkan dependency
     const vulkan = b.dependency("vulkan_zig", .{
         .target = target,
         .registry = b.path("vk.xml"),
     });
-    exe.root_module.addImport("vulkan", vulkan.module("vulkan-zig"));
-    exe.linkSystemLibrary("vulkan");
+    lib.addImport("vulkan", vulkan.module("vulkan-zig"));
 
-    // Install
-    b.installArtifact(exe);
+
+    // ============ run example exe =============
+
+    // create render image executable
+    const img_exe = b.addExecutable(.{
+        .name = "img-example",
+        .root_module = b.createModule(.{
+            .optimize = optimize,
+            .target = target,
+            .root_source_file = b.path("examples/render_image.zig"),
+            .imports = &.{ .{ .name = "fidelitty", .module = lib} },
+        })
+    });
+
+    // Compile stb_image
+    img_exe.addIncludePath(b.path("examples/"));
+    img_exe.addCSourceFile(.{.file=b.path("examples/stb_image_impl.c")});
+
+    // Link Vulkan
+    img_exe.linkSystemLibrary("vulkan");
+
+    // Install binary to zig-out
+    b.installArtifact(img_exe);
 
     // Optionally run
-    const run_exe = b.addRunArtifact(exe);
+    const run_exe = b.addRunArtifact(img_exe);
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
 }
-
