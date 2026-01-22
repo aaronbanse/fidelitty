@@ -115,7 +115,7 @@ pub const Context = struct {
     // Did we create this context or did we derive it from an existing vulkan instance
     context_ownership: ContextOwnershipMode,
 
-    // Initialize a standalone vulkan context and setup machinery
+    /// Initialize a standalone vulkan context and setup machinery
     pub fn init(
         self: *@This(),
         allocator: mem.Allocator,
@@ -140,6 +140,7 @@ pub const Context = struct {
         @memcpy(mem.asBytes(&dataset), dataset_raw);
         try self.createGlyphSet(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size, &dataset);
     }
+
     // TODO: FINISH IMPLEMENTING STUB
     // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
     pub fn initFromExisting(self: *@This(), allocator: mem.Allocator) !void {
@@ -149,10 +150,38 @@ pub const Context = struct {
 
     // Cleanup resources
     pub fn deinit(self: *@This()) void {
-        self._pipelines.deinit();
-    }
+        // wait for all work to finish
+        self._device.deviceWaitIdle() catch {};
 
-    // Context manages memory
+        // Destroy all pipelines
+        var iter = self._pipelines.iterator();
+        while (iter.next()) |entry| {
+            self.destroyPipelineResources(entry.value_ptr);
+        }
+        self._pipelines.deinit();
+
+        // Only cleanup Vulkan resources if we own them
+        // We may need to change this, and still destroy resources we allocated ourselves, just not the vulkan / device instance.
+        if (self.context_ownership == .Owned) {
+            // Destroy glyph set buffers
+            self.destroyMemBuffer(self._device_codepoint_buf);
+            self.destroyMemBuffer(self._device_mask_buf);
+            self.destroyMemBuffer(self._device_color_eqn_buf);
+
+            // Destroy layouts
+            self._device.destroyPipelineLayout(self._pipeline_layout, null);
+            self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
+            self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
+
+            // Destroy pools (frees associated descriptor sets and command buffers)
+            self._device.destroyDescriptorPool(self._desc_pool, null);
+            self._device.destroyCommandPool(self._cmd_pool, null);
+
+            // Destroy device and instance
+            self._device.destroyDevice(null);
+            self._instance.destroyInstance(null);
+        }       
+    }
 
     pub fn createRenderPipeline(
         self: *@This(),
@@ -194,8 +223,8 @@ pub const Context = struct {
         return handle;
     }
 
-    pub fn executeRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
-        for (pipeline_handles) |handle| {
+    pub fn executeRenderPipelines(self: @This(), handles: []const PipelineHandle) !void {
+        for (handles) |handle| {
             const res: PipelineResources = self._pipelines.get(handle._id)
                 orelse return error.InvalidPipelineHandle;
 
@@ -213,26 +242,105 @@ pub const Context = struct {
         }
     }
 
-    pub fn waitRenderPipelines(self: @This(), pipeline_handles: []const PipelineHandle) !void {
+    pub fn waitRenderPipelines(self: @This(), handles: []const PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
         var fences: [32]vk.Fence = undefined;
 
-        for (pipeline_handles, 0..) |handle, i| {
+        for (handles, 0..) |handle, i| {
             const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
             fences[i] = res.pipeline_complete;
         }
 
-        _ = try self._device.waitForFences(@intCast(pipeline_handles.len), @ptrCast(&fences), .true, timeout);
+        _ = try self._device.waitForFences(@intCast(handles.len), @ptrCast(&fences), .true, timeout);
     }
 
-    // TODO: implement these
-    // pub fn resizeRenderPipeline(self: *@This(), render_pipeline: *PipelineHandle, im_w: u16, im_h: u16, patch_w: u8, patch_h: u8) !void {
-    //
-    // }
+    pub fn resizeRenderPipeline(
+        self: *@This(),
+        handle: *PipelineHandle,
+        new_w: u16, new_h: u16
+    ) !void {
+        const res = self._pipelines.getPtr(handle._id) orelse return error.InvalidPipelineHandle;
 
-    // pub fn destroyRenderPipeline(self: *@This(), render_pipeline: *PipelineHandle) void {
-    //
-    // }
+        // wait for work on this pipeline to complete
+        try self.waitRenderPipelines(&.{handle.*});
+
+        // Calculate new sizes
+        const new_input_size = 3 * @as(usize, new_w) * @as(usize, new_h) * @as(usize, self._patch_w) * @as(usize, self._patch_h) * @sizeOf(u8);
+        const new_output_size = @as(usize, new_w) * @as(usize, new_h) * @sizeOf(uni_im.UnicodePixelData);
+
+        // Unmap old buffers
+        self._device.unmapMemory(res.input_buf.mem);
+        self._device.unmapMemory(res.output_buf.mem);
+
+        // Destroy old buffers
+        self.destroyMemBuffer(res.input_buf);
+        self.destroyMemBuffer(res.device_input_buf);
+        self.destroyMemBuffer(res.device_output_buf);
+        self.destroyMemBuffer(res.output_buf);
+
+        // Destroy old command buffer and fence
+        self._device.freeCommandBuffers(self._cmd_pool, 1, @ptrCast(&res.cmd_buf));
+        self._device.destroyFence(res.pipeline_complete, null);
+
+        // Allocate new buffers
+        try self.createPipelineBuffers(res, new_input_size, new_output_size);
+
+        // Update descriptor sets to point to new buffers
+        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+            .{
+                .dst_set = res.buf_io_desc_set,
+                .dst_binding = 0,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = res.device_input_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
+            },
+            .{
+                .dst_set = res.buf_io_desc_set,
+                .dst_binding = 1,
+                .dst_array_element = 0,
+                .descriptor_count = 1,
+                .descriptor_type = .storage_buffer,
+                .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
+                    .buffer = res.device_output_buf.buf,
+                    .offset = 0,
+                    .range = vk.WHOLE_SIZE,
+                }},
+                .p_image_info = &.{},
+                .p_texel_buffer_view = &.{},
+            },
+        }, 0, null);
+
+        // Remap CPU buffers to handle
+        try self.mapCpuBuffersToHandle(res, &handle.input_surface, &handle.output_surface);
+
+        // Recreate command buffer with new dimensions
+        try self.createPipelineCommandBuffer(res, new_w, new_h);
+
+        // Update handle dimensions
+        handle.out_im_w = new_w;
+        handle.out_im_h = new_h;
+    }
+
+    pub fn destroyRenderPipelines(self: *@This(), handles: []PipelineHandle) void {
+        for (handles) |handle| {
+            if (self._pipelines.fetchRemove(handle._id)) |kv| {
+                var res = kv.value;
+                self.destroyPipelineResources(&res);
+            }
+
+            // Invalidate handle
+            handle._id = 0;
+            handle.input_surface = undefined;
+            handle.output_surface = undefined;
+        }
+    }
 
     // INTERNAL
     // ---------------------------
@@ -828,6 +936,30 @@ pub const Context = struct {
         const output_raw: *anyopaque = try self._device.mapMemory(res.output_buf.mem, 0, res.output_buf.size, .{})
             orelse return error.MapMemoryFailed;
         output_surface.* = @ptrCast(@alignCast(output_raw));
+    }
+
+    fn destroyMemBuffer(self: @This(), buf: MemBuffer) void {
+        self._device.destroyBuffer(buf.buf, null);
+        self._device.freeMemory(buf.mem, null);
+    }
+
+    fn destroyPipelineResources(self: *@This(), res: *PipelineResources) void {
+        // Unmap CPU buffers
+        self._device.unmapMemory(res.input_buf.mem);
+        self._device.unmapMemory(res.output_buf.mem);
+
+        // Destroy buffers
+        self.destroyMemBuffer(res.input_buf);
+        self.destroyMemBuffer(res.device_input_buf);
+        self.destroyMemBuffer(res.device_output_buf);
+        self.destroyMemBuffer(res.output_buf);
+
+        // Destroy pipeline and fence
+        self._device.destroyPipeline(res.compute_pipeline, null);
+        self._device.destroyFence(res.pipeline_complete, null);
+
+        // Note: descriptor sets and command buffers are pool-allocated,
+        // they get freed when the pools are destroyed in deinit()
     }
 };
 

@@ -45,6 +45,9 @@ pub const UnicodePixelData = unicode_.UnicodePixelData;
 /// Vulkan-based context for managing render pipelines, intended to be used as a singleton.
 pub const ComputeContext = compute_.Context;
 
+/// Non-owning handle to a render pipeline managed by the compute context, allowing input writing and output reading.
+pub const PipelineHandle = compute_.PipelineHandle;
+
 // In the future, I will add support for attaching the context to an existing Vulkan instance,
 // allowing this library to be used a postprocessing step with data passed directly through the gpu.
 

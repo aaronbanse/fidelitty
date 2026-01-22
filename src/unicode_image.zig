@@ -48,6 +48,7 @@ pub const UnicodeImage = struct {
         self.width = w;
         self.height = h;
         self.fillTemplate();
+        self.writeRowPositions();
     }
 
     pub fn deinit(self: *@This(), alloc: mem.Allocator) void {
