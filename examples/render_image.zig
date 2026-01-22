@@ -16,7 +16,7 @@ pub fn main() !void {
     const patch_h = ftty.dataset_config.patch_height;
 
     // set this to your desired image path
-    const IMAGE_PATH = ".img/img.jpg";
+    const IMAGE_PATH = "examples/assets/kitty.jpg";
 
     // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
@@ -86,7 +86,7 @@ pub fn main() !void {
     // resize and reposition the image to overlap the other image
     const out_image_w_small = out_image_w / 2;
     const out_image_h_small = out_image_h / 2;
-    try ftty.terminal.reserveVerticalSpace(out_image_h_small);
+    try ftty.terminal.reserveVerticalSpace(out_image_h_small - 20);
     cursor_pos = try ftty.terminal.getCursorPos();
     out_image.setPos(cursor_pos.col + 90, cursor_pos.row - 20);
     try out_image.resize(allocator, out_image_w_small, out_image_h_small);

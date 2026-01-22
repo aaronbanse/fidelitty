@@ -8,6 +8,10 @@ This library uses zig ```0.15.2```, with C bindings coming soon. Currently only 
 
 *Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
+<p align="center">
+  <img src="examples/assets/example-output.png" width="600" alt="Terminal render example">
+</p>
+
 #### Features
 
 - Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
