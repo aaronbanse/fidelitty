@@ -34,7 +34,7 @@ Set your terminal font in `build.zig` (search for `FONT_PATH`), then generate th
 zig build gen-dataset && zig build
 ```
 
-Run the example:
+Run the example: *note: the example depends on stb_image, which is not safe for use on untrusted images. Use at your own risk until this is addressed.*
 ```bash
 zig build run-img-ex
 ```
