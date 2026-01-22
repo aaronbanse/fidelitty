@@ -15,6 +15,9 @@ pub fn main() !void {
     const patch_w = ftty.dataset_config.patch_width;
     const patch_h = ftty.dataset_config.patch_height;
 
+    // set this to your desired image path
+    const IMAGE_PATH = ".img/img.jpg";
+
     // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
@@ -25,7 +28,7 @@ pub fn main() !void {
     var img_w: u32 = undefined;
     var img_h: u32 = undefined;
     var img_chan_n: u32 = undefined;
-    const image_raw: [*]u8 = c.stbi_load(".img/img.jpg",
+    const image_raw: [*]u8 = c.stbi_load(IMAGE_PATH,
         @ptrCast(&img_w), @ptrCast(&img_h), @ptrCast(&img_chan_n), 3);
     defer c.stbi_image_free(image_raw);
     std.debug.print("Finished.\n", .{});
@@ -71,7 +74,7 @@ pub fn main() !void {
     const cursor_pos = try ftty.terminal.getCursorPos();
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
-    const num_runs = 1;
+    const num_runs = 1; // you can play around with num_runs to see how fast it can run the pipeline
     for (0..num_runs) |_| {
         // run pipeline
         try compute_context.executeRenderPipelines(&.{pipeline_handle});

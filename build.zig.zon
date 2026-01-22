@@ -2,7 +2,9 @@
     .name = .fidelitty,
     .version = "0.1.0",
     .paths = .{
+        "fidelitty",
         "src",
+        "src/external",
         "shaders",
         "build.zig",
         "build.zig.zon"

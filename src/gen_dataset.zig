@@ -39,6 +39,7 @@ pub fn main() !void {
     try dataset.init(&codepoints, allocator);
 
     // Open file to write dataset to
+    try fs.cwd().makePath("unicode_glyph_data");
     var write_file = try fs.cwd().createFile(dataset_path, .{});
     defer write_file.close();
 
