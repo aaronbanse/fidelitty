@@ -117,28 +117,31 @@ pub const Context = struct {
 
     /// Initialize a standalone vulkan context and setup machinery
     pub fn init(
-        self: *@This(),
         allocator: mem.Allocator,
         max_pipelines: u8
-    ) !void {
-        self.context_ownership = .Owned;
-        self._pipelines = .init(allocator);
-        self._max_pipelines = max_pipelines;
-        self._patch_w = dataset_config.patch_width;
-        self._patch_h = dataset_config.patch_height;
-        self.loadBase();
-        try self.createInstance();
-        const compute_device_indices = try self.createDevice();
-        self.createQueue(compute_device_indices.queue_fam_index);
-        try self.createCommandPool(compute_device_indices.queue_fam_index);
-        try self.createDescriptorPool(max_pipelines);
-        try self.createLayouts();
+    ) !@This() {
+        const ctx: @This() = undefined;
+
+        ctx.context_ownership = .Owned;
+        ctx._pipelines = .init(allocator);
+        ctx._max_pipelines = max_pipelines;
+        ctx._patch_w = dataset_config.patch_width;
+        ctx._patch_h = dataset_config.patch_height;
+        ctx.loadBase();
+        try ctx.createInstance();
+        const compute_device_indices = try ctx.createDevice();
+        ctx.createQueue(compute_device_indices.queue_fam_index);
+        try ctx.createCommandPool(compute_device_indices.queue_fam_index);
+        try ctx.createDescriptorPool(max_pipelines);
+        try ctx.createLayouts();
 
         // load glyph dataset to gpu
         const dataset_raw = @embedFile(gen_config.dataset_file);
         var dataset: glyph.UnicodeGlyphDataset(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size) = undefined;
         @memcpy(mem.asBytes(&dataset), dataset_raw);
-        try self.createGlyphSet(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size, &dataset);
+        try ctx.createGlyphSet(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size, &dataset);
+
+        return ctx;
     }
 
     // TODO: FINISH IMPLEMENTING STUB

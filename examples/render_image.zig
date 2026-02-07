@@ -34,8 +34,7 @@ pub fn main() !void {
     std.debug.print("Finished.\n", .{});
 
     // initialize compute context
-    var compute_context: ftty.ComputeContext = undefined;
-    try compute_context.init(allocator, 8);
+    var compute_context: ftty.ComputeContext = try .init(allocator, 8);
     defer compute_context.deinit();
 
     // create a render pipeline
@@ -65,8 +64,7 @@ pub fn main() !void {
     }
 
     // Init output image to fill terminal
-    var out_image: ftty.UnicodeImage = undefined;
-    try out_image.init(allocator, out_image_w, out_image_h);
+    var out_image: ftty.UnicodeImage = try .init(allocator, out_image_w, out_image_h);
     defer out_image.deinit(allocator);
 
     // reserve space on the screen for our image to avoid overwriting

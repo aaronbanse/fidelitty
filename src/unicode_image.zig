@@ -33,14 +33,15 @@ pub const UnicodeImage = struct {
     height: u16,
     buf: []u8,
     
-    pub fn init(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {
-        self.buf = try alloc.alloc(u8, getSize(w, h));
-        self.x = 0;
-        self.y = 0;
-        self.width = w;
-        self.height = h;
-        self.fillTemplate();
-        self.writeRowPositions();
+    pub fn init(alloc: mem.Allocator, w: u16, h: u16) !@This() {
+        const img: @This() = undefined;
+        img.buf = try alloc.alloc(u8, getSize(w, h));
+        img.x = 0;
+        img.y = 0;
+        img.width = w;
+        img.height = h;
+        img.fillTemplate();
+        img.writeRowPositions();
     }
 
     pub fn resize(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {

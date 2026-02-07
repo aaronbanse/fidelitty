@@ -28,7 +28,7 @@ const dataset_config_ = @import("dataset_config");
 // ================================================================================================
 
 
-// ================== PUBLIC API ====================
+// ================== ZIG API ====================
 
 /// Build-time configuration containing important metadata constants for the glyph dataset
 pub const dataset_config = dataset_config_;
@@ -51,4 +51,71 @@ pub const PipelineHandle = compute_.PipelineHandle;
 // In the future, I will add support for attaching the context to an existing Vulkan instance,
 // allowing this library to be used a postprocessing step with data passed directly through the gpu.
 
+// =============== DEFINITIONS FOR C API ===============
+
+// TODO: add double-buffering support - unclear how this should work just yet
+
+const c_allocator = @import("std").heap.c_allocator;
+
+export fn ftty_context_create(max_pipelines: u8) callconv(.C) ?*ComputeContext {
+    const ctx = c_allocator.create(ComputeContext) catch return null;
+    ctx.* = ComputeContext.init(c_allocator, max_pipelines) catch {
+        c_allocator.destroy(ctx);
+        return null;
+    };
+    return ctx;
+}
+
+export fn ftty_context_destroy(ctx: *ComputeContext) callconv(.C) void {
+    ctx.deinit();
+    c_allocator.destroy(ctx);
+}
+
+export fn ftty_context_create_render_pipeline(ctx: *ComputeContext, w: u16, h: u16) callconv(.C) ?*PipelineHandle {
+    const pipeline = c_allocator.create(PipelineHandle) catch return null;
+    pipeline.* = ctx.createRenderPipeline(w, h) catch {
+        c_allocator.destroy(pipeline);
+        return null;
+    };
+    return pipeline;
+}
+
+export fn ftty_context_destroy_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.C) void {
+    ctx.destroyRenderPipelines(pipeline[0..1]);
+    c_allocator.destroy(pipeline);
+}
+
+export fn ftty_context_resize_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle, w: u16, h: u16) callconv(.C) i32 {
+    ctx.resizeRenderPipeline(pipeline, w, h) catch {
+        return -1;
+    };
+    return 0;
+}
+
+export fn ftty_context_execute_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.C) i32 {
+    ctx.executeRenderPipelines(pipeline[0..1]) catch {
+        return -1;
+    };
+    return 0;
+}
+
+export fn ftty_context_wait_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.C) i32 {
+    ctx.waitRenderPipelines(pipeline[0..1]) catch {
+        return -1;
+    };
+    return 0;
+}
+
+export fn ftty_pipeline_get_dims(pipeline: *PipelineHandle, w: *u16, h: *u16) callconv(.C) void {
+    w.* = pipeline.out_im_w;
+    h.* = pipeline.out_im_h;
+}
+
+export fn ftty_pipeline_get_input_surface(pipeline: *PipelineHandle) callconv(.C) *u8 {
+    return pipeline.input_surface;
+}
+
+export fn ftty_pipeline_get_output_surface(pipeline: *PipelineHandle) callconv(.C) *UnicodePixelData {
+    return pipeline.output_surface;
+}
 
