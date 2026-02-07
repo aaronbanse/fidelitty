@@ -1,3 +1,5 @@
+// =============== C API ================
+
 typedef struct ftty_context_t ftty_context_t;
 
 typedef struct ftty_pipeline_t ftty_pipeline_t;
@@ -20,7 +22,6 @@ void ftty_context_destroy_render_pipeline(ftty_context_t* ctx, ftty_pipeline_t* 
 int ftty_context_resize_render_pipeline(ftty_context_t* ctx, ftty_pipeline_t* pipeline, uint16_t w, uint16_t h);
 
 int ftty_context_execute_render_pipeline(ftty_context_t* ctx, ftty_pipeline_t* pipeline);
-
 
 int ftty_context_wait_render_pipeline(ftty_context_t* ctx, ftty_pipeline_t* pipeline);
 
