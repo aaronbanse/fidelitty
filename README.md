@@ -2,7 +2,7 @@
 
 ### A library for high performance rendering in the terminal using unicode characters and escape sequences
 
-This library uses zig ```0.15.2```, with C bindings coming soon. Currently only Linux is supported.
+This library uses Zig ```0.15.2```, with C bindings coming soon. Currently only Linux is supported.
 
 *Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
 
@@ -43,10 +43,15 @@ Run the example: *note: the example depends on stb_image, which is not safe for 
 zig build run-img-ex
 ```
 
-To use as a library, add fidelitty as a dependency in your `build.zig.zon`, or have zig fetch it automatically:
+To use as a Zig library, add fidelitty as a dependency in your `build.zig.zon`, or have Zig fetch it automatically:
 ```bash
 # in project root
 zig fetch --save https://github.com/aaronbanse/fidelitty.git
+```
+
+To build as a `.so` file and install `libfidelitty.so` and `fidelitty.h` to `/usr/local`:
+```bash
+zig build -Dbuild-mode=shared_lib --prefix /usr/local
 ```
 
 And, in your `build.zig`, link the Vulkan library to your executable:
