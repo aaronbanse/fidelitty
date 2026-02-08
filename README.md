@@ -2,7 +2,7 @@
 
 ### A library for high performance rendering in the terminal using unicode characters and escape sequences
 
-This library uses Zig ```0.15.2```, with C bindings coming soon. Currently only Linux is supported.
+This library uses Zig ```0.15.2```. Currently only Linux is supported.
 
 *Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
 
