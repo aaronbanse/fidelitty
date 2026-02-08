@@ -43,6 +43,9 @@ pub const ComputeContext = compute_.Context;
 /// Non-owning handle to a render pipeline managed by the compute context, allowing input writing and output reading.
 pub const PipelineHandle = compute_.PipelineHandle;
 
+/// Pixel format for input surfaces
+pub const PixelFormat = compute_.PixelFormat;
+
 // In the future, I will add support for attaching the context to an existing Vulkan instance,
 // allowing this library to be used a postprocessing step with data passed directly through the gpu.
 
@@ -85,6 +88,22 @@ export fn ftty_context_destroy(ctx: *ComputeContext) callconv(.c) void {
 export fn ftty_context_create_render_pipeline(ctx: *ComputeContext, w: u16, h: u16) callconv(.c) ?*PipelineHandle {
     const pipeline = c_allocator.create(PipelineHandle) catch return null;
     pipeline.* = ctx.createRenderPipeline(w, h) catch {
+        c_allocator.destroy(pipeline);
+        return null;
+    };
+    return pipeline;
+}
+
+export fn ftty_context_create_render_pipeline_ex(
+    ctx: *ComputeContext,
+    w: u16, h: u16,
+    pixel_format: u8,
+    src_cell_w: u8,
+    src_cell_h: u8,
+) callconv(.c) ?*PipelineHandle {
+    const format: PixelFormat = @enumFromInt(pixel_format);
+    const pipeline = c_allocator.create(PipelineHandle) catch return null;
+    pipeline.* = ctx.createRenderPipelineEx(w, h, format, src_cell_w, src_cell_h) catch {
         c_allocator.destroy(pipeline);
         return null;
     };

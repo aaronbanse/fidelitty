@@ -9,6 +9,27 @@ const dataset_config = @import("dataset_config");
 const uni_im = @import("unicode_image.zig");
 const glyph = @import("glyph.zig");
 
+pub const PixelFormat = enum(u8) {
+    rgb = 0, // 3 bytes/pixel, channel order: R G B
+    bgra = 1, // 4 bytes/pixel, channel order: B G R A (alpha ignored)
+
+    pub fn bpp(self: @This()) u8 {
+        return switch (self) {
+            .rgb => 3,
+            .bgra => 4,
+        };
+    }
+
+    /// Channel indices for swizzling to RGB order.
+    /// e.g. BGRA layout [B,G,R,A] needs swizzle [2,1,0] to read R,G,B.
+    pub fn swizzle(self: @This()) [3]i32 {
+        return switch (self) {
+            .rgb => .{ 0, 1, 2 },
+            .bgra => .{ 2, 1, 0 },
+        };
+    }
+};
+
 /// Non-owning handle to a render pipeline managed by compute context
 pub const PipelineHandle = struct {
     // dimensions of output image in unicode pixels
@@ -21,11 +42,16 @@ pub const PipelineHandle = struct {
 
     _id: Context.HandleID, // Internal: unique id to tie to vulkan resources
 
+    // Input format config (set at create, preserved across resize)
+    pixel_format: PixelFormat,
+    src_cell_w: u8, // source pixels per cell horizontally
+    src_cell_h: u8, // source pixels per cell vertically
+
     // input surface dimensions is dependent on size of output image * unicode pixel size
-    pub fn inputDims(self: @This(), patch_w: u8, patch_h: u8) struct { w: u32, h: u32 } {
+    pub fn inputDims(self: @This()) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, patch_w),
-            .h = @as(u32, self.out_im_h) * @as(u32, patch_h),
+            .w = @as(u32, self.out_im_w) * @as(u32, self.src_cell_w),
+            .h = @as(u32, self.out_im_h) * @as(u32, self.src_cell_h),
         };
     }
 };
@@ -186,12 +212,28 @@ pub const Context = struct {
         }       
     }
 
+    fn computeInputSize(im_w: u16, im_h: u16, pixel_format: PixelFormat, src_cell_w: u8, src_cell_h: u8) usize {
+        const bpp: usize = pixel_format.bpp();
+        return bpp * @as(usize, im_w) * @as(usize, src_cell_w) * @as(usize, im_h) * @as(usize, src_cell_h);
+    }
+
     pub fn createRenderPipeline(
         self: *@This(),
         im_w: u16,
         im_h: u16,
     ) !PipelineHandle {
-        const input_size = 3 * @as(usize, im_w) * @as(usize, im_h) * @as(usize, self._patch_w) * @as(usize, self._patch_h) * @sizeOf(u8);
+        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._patch_w, self._patch_h);
+    }
+
+    pub fn createRenderPipelineEx(
+        self: *@This(),
+        im_w: u16,
+        im_h: u16,
+        pixel_format: PixelFormat,
+        src_cell_w: u8,
+        src_cell_h: u8,
+    ) !PipelineHandle {
+        const input_size = computeInputSize(im_w, im_h, pixel_format, src_cell_w, src_cell_h);
         const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
 
         // initialize and allocate resources
@@ -207,6 +249,9 @@ pub const Context = struct {
             .input_surface = undefined,
             .output_surface = undefined,
             ._id = undefined,
+            .pixel_format = pixel_format,
+            .src_cell_w = src_cell_w,
+            .src_cell_h = src_cell_h,
         };
         // map handle to input / output buffers
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
@@ -222,7 +267,7 @@ pub const Context = struct {
 
         // add pipeline to registry
         try self._pipelines.put(id, resources);
-        
+
         return handle;
     }
 
@@ -240,7 +285,7 @@ pub const Context = struct {
             orelse return error.InvalidPipelineHandle;
 
         try self.recordPipelineCommandBuffer(
-            res, handle.out_im_w, dispatch_x, dispatch_y, dispatch_w, dispatch_h,
+            res, handle, dispatch_x, dispatch_y, dispatch_w, dispatch_h,
         );
 
         try self._device.resetFences(1, &.{res.pipeline_complete});
@@ -273,7 +318,7 @@ pub const Context = struct {
         try self.waitRenderPipeline(handle.*);
 
         // Calculate new sizes
-        const new_input_size = 3 * @as(usize, new_w) * @as(usize, new_h) * @as(usize, self._patch_w) * @as(usize, self._patch_h) * @sizeOf(u8);
+        const new_input_size = computeInputSize(new_w, new_h, handle.pixel_format, handle.src_cell_w, handle.src_cell_h);
         const new_output_size = @as(usize, new_w) * @as(usize, new_h) * @sizeOf(uni_im.UnicodePixelData);
 
         // Unmap old buffers
@@ -804,7 +849,7 @@ pub const Context = struct {
         }, 0, null);
     }
 
-    // extern to conform to C ABI
+    // extern to conform to C ABI layout, must match GLSL push constant block (std430)
     const PushConstants = extern struct {
         num_codepoints: u32,
         out_im_w: u32,
@@ -812,6 +857,13 @@ pub const Context = struct {
         dispatch_y: u32,
         dispatch_w: u32,
         dispatch_h: u32,
+        input_bpp: u32,
+        _pad: u32, // alignment padding for ivec3 (16-byte aligned in std430)
+        swizzle: [3]i32,
+        input_cell_w: u32,
+        input_cell_h: u32,
+        patch_w: u32,
+        patch_h: u32,
     };
 
     fn allocatePipelineCommandResources(self: *@This(), res: *PipelineResources) !void {
@@ -827,7 +879,7 @@ pub const Context = struct {
     fn recordPipelineCommandBuffer(
         self: *@This(),
         res: PipelineResources,
-        out_im_w: u32,
+        handle: PipelineHandle,
         dispatch_x: u32, dispatch_y: u32,
         dispatch_w: u32, dispatch_h: u32,
     ) !void {
@@ -863,11 +915,18 @@ pub const Context = struct {
         // upload uniforms as push constants
         const push = PushConstants{
             .num_codepoints = self._num_codepoints,
-            .out_im_w = out_im_w,
+            .out_im_w = handle.out_im_w,
             .dispatch_x = dispatch_x,
             .dispatch_y = dispatch_y,
             .dispatch_w = dispatch_w,
             .dispatch_h = dispatch_h,
+            .input_bpp = handle.pixel_format.bpp(),
+            ._pad = 0,
+            .swizzle = handle.pixel_format.swizzle(),
+            .input_cell_w = handle.src_cell_w,
+            .input_cell_h = handle.src_cell_h,
+            .patch_w = self._patch_w,
+            .patch_h = self._patch_h,
         };
 
         self._device.cmdPushConstants(

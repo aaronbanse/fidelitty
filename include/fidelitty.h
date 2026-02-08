@@ -8,6 +8,11 @@ typedef struct ftty_context_t ftty_context_t;
 
 typedef struct ftty_pipeline_t ftty_pipeline_t;
 
+typedef enum {
+    FTTY_PIXEL_RGB  = 0,   // 3 bytes/pixel, channel order: R G B
+    FTTY_PIXEL_BGRA = 1,   // 4 bytes/pixel, channel order: B G R A (alpha ignored)
+} ftty_pixel_format_t;
+
 typedef struct {
   uint8_t br, bg, bb;
   uint8_t fr, fg, fb;
@@ -22,6 +27,12 @@ void ftty_context_destroy(ftty_context_t* ctx);
 
 // Render Pipelines
 ftty_pipeline_t* ftty_context_create_render_pipeline(ftty_context_t* ctx, uint16_t w, uint16_t h);
+
+ftty_pipeline_t* ftty_context_create_render_pipeline_ex(ftty_context_t* ctx,
+                                                        uint16_t w, uint16_t h,
+                                                        ftty_pixel_format_t pixel_format,
+                                                        uint8_t src_cell_w,
+                                                        uint8_t src_cell_h);
 
 void ftty_context_destroy_render_pipeline(ftty_context_t* ctx, ftty_pipeline_t* handle);
 

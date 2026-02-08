@@ -55,9 +55,16 @@ layout(push_constant) uniform PushConstants {
     uint dispatch_y;
     uint dispatch_w;
     uint dispatch_h;
+    uint input_bpp;      // bytes-per-pixel: number of color channels - only supports 3 or 4 currently
+    ivec3 swizzle;       // indices to shuffle by (swizzling) - cell set to 3 will be ignored as we don't use alpha, just rgb.
+                         // the swizzle from bgra to rgb would be: [ 2, 1, 0 ].
+    uint input_cell_w;   // source pixels per cell horizontally
+    uint input_cell_h;   // source pixels per cell vertically
+    uint patch_w;        // output patch width (from glyph dataset config)
+    uint patch_h;        // output patch height (from glyph dataset config)
 } pc;
 
-// RGB values of a 4x4 patch of the input image. One processed per invocation
+// RGB values of a patch_w x patch_h patch of the input image. One processed per invocation
 struct Patch {
   vec4[4] r;
   vec4[4] g;
@@ -79,10 +86,6 @@ vec2 solveChannel(const uint mask_idx, const ColorEquation eqn, const vec4[4] p_
 // Therefore each invocation is responsible for the corresponding 4x4 patch in the input image,
 // and writing to that pixel in the output image.
 void main() {
-  // challenges: need to convert uint8_t to floats and pack into vectors for fast arithmetic
-  // then we need to figure out the packing on unicodePixels
-  // identify patch we're working on
-
   // Calculate indices within dispatch region
   const uint local_idx = gl_GlobalInvocationID.x;
   if (local_idx >= pc.dispatch_w * pc.dispatch_h) return;
@@ -91,32 +94,22 @@ void main() {
   const uint out_y = (local_idx / pc.dispatch_w) + pc.dispatch_y;
   const uint out_idx = out_y * pc.out_im_w + out_x;
 
-  const uint in_x = out_x * 4;
-  const uint in_y = out_y * 4;
-  const uint in_im_w = pc.out_im_w * 4;
-  
+  const uint in_x = out_x * pc.input_cell_w;
+  const uint in_y = out_y * pc.input_cell_h;
+  const uint in_im_w = pc.out_im_w * pc.input_cell_w;
+
   // collect pixel data for patch
+  // For each of the pc.patch_w patch columns, find source pixel via nearest-neighbor
   Patch p;
-  for (uint j = 0; j < 4; j++) { // iterate through rows
-    const uint in_idx = (in_y + j) * in_im_w + in_x;
-    p.r[j] = vec4(
-      float(rgb[(in_idx + 0) * 3 + 0]),
-      float(rgb[(in_idx + 1) * 3 + 0]),
-      float(rgb[(in_idx + 2) * 3 + 0]),
-      float(rgb[(in_idx + 3) * 3 + 0])
-    );
-    p.g[j] = vec4(
-      float(rgb[(in_idx + 0) * 3 + 1]),
-      float(rgb[(in_idx + 1) * 3 + 1]),
-      float(rgb[(in_idx + 2) * 3 + 1]),
-      float(rgb[(in_idx + 3) * 3 + 1])
-    );
-    p.b[j] = vec4(
-      float(rgb[(in_idx + 0) * 3 + 2]),
-      float(rgb[(in_idx + 1) * 3 + 2]),
-      float(rgb[(in_idx + 2) * 3 + 2]),
-      float(rgb[(in_idx + 3) * 3 + 2])
-    );
+  for (uint j = 0; j < pc.patch_h; j++) {
+    const uint row_base = (in_y + j) * in_im_w + in_x;
+    for (uint col = 0; col < pc.patch_w; col++) {
+      uint src_col = col * pc.input_cell_w / pc.patch_w;
+      uint byte_off = (row_base + src_col) * pc.input_bpp;
+      p.r[j][col] = float(rgb[byte_off + pc.swizzle[0]]);
+      p.g[j][col] = float(rgb[byte_off + pc.swizzle[1]]);
+      p.b[j][col] = float(rgb[byte_off + pc.swizzle[2]]);
+    }
   }
 
   // Compute best unicode character and pixel
@@ -130,7 +123,7 @@ void main() {
 
     // reconstruct patch using glyph neg / pos and these optimal colors
     float diff = 0;
-    for (uint row = 0; row < 4; row++) {
+    for (uint row = 0; row < pc.patch_h; row++) {
       vec4 r_err = r_solved.x*masks[i].neg[row] + r_solved.y*masks[i].pos[row] - p.r[row];
       vec4 g_err = g_solved.x*masks[i].neg[row] + g_solved.y*masks[i].pos[row] - p.g[row];
       vec4 b_err = b_solved.x*masks[i].neg[row] + b_solved.y*masks[i].pos[row] - p.b[row];
