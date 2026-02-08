@@ -120,7 +120,7 @@ pub const Context = struct {
         allocator: mem.Allocator,
         max_pipelines: u8
     ) !@This() {
-        const ctx: @This() = undefined;
+        var ctx: @This() = undefined;
 
         ctx.context_ownership = .Owned;
         ctx._pipelines = .init(allocator);
@@ -332,7 +332,7 @@ pub const Context = struct {
     }
 
     pub fn destroyRenderPipelines(self: *@This(), handles: []PipelineHandle) void {
-        for (handles) |handle| {
+        for (handles) |*handle| {
             if (self._pipelines.fetchRemove(handle._id)) |kv| {
                 var res = kv.value;
                 self.destroyPipelineResources(&res);

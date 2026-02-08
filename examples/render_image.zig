@@ -78,7 +78,7 @@ pub fn main() !void {
     // wait on completion
     try compute_context.waitRenderPipelines(&.{pipeline_handle});
 
-    out_image.readPixelBuf(out_image_w, out_image_h, pipeline_handle.output_surface);
+    out_image.readPixels(pipeline_handle.output_surface);
     try out_image.draw();
 
     // resize and reposition the image to overlap the other image
@@ -119,6 +119,6 @@ pub fn main() !void {
     try compute_context.waitRenderPipelines(&.{pipeline_handle});
 
     // render
-    out_image.readPixelBuf(out_image_w_small, out_image_h_small, pipeline_handle.output_surface);
+    out_image.readPixels(pipeline_handle.output_surface);
     try out_image.draw();
 }

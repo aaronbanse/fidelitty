@@ -91,18 +91,28 @@ pub fn build(b: *std.Build) void {
 
     // ============= root module ==============
 
+    const build_mode = b.option(enum { module, shared_lib }, "build-mode", "Build as Zig module or shared library") orelse .module;
+
     // Create library
-    const lib = b.addModule("fidelitty", .{
+    const root_module = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .root_source_file = b.path("fidelitty.zig"),
         .link_libc = true,
     });
-    lib.addOptions("dataset_config", dataset_config);
-    lib.addOptions("gen_config", gen_config);
+
+    const lib_artifact_opt = if (build_mode == .shared_lib) b.addLibrary(.{
+        .name = "fidelitty",
+        .root_module = root_module,
+        .linkage = .dynamic,
+        .version = .{ .major = 0, .minor = 1, .patch = 0 },
+    }) else null;
+
+    root_module.addOptions("dataset_config", dataset_config);
+    root_module.addOptions("gen_config", gen_config);
     
     // Allow embedding of dataset into binary
-    lib.addAnonymousImport(DATASET_FILE_IDENTIFIER, .{
+    root_module.addAnonymousImport(DATASET_FILE_IDENTIFIER, .{
         .root_source_file = b.path(DATASET_PATH)
     });
 
@@ -115,20 +125,27 @@ pub fn build(b: *std.Build) void {
     });
     const shader_spv = shader_cmd.addOutputFileArg("shaders/bin/compute_pixel.spv");
     shader_cmd.addFileArg(b.path("shaders/compute_pixel.glsl"));
-    lib.addAnonymousImport("shaders/bin/compute_pixel.spv", .{
+    root_module.addAnonymousImport("shaders/bin/compute_pixel.spv", .{
         .root_source_file = shader_spv
     });
 
     // Compile stb_truetype
-    lib.addIncludePath(b.path("src/external/"));
-    lib.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
+    root_module.addIncludePath(b.path("src/external/"));
+    root_module.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
 
     // Add vulkan dependency
     const vulkan = b.dependency("vulkan_zig", .{
         .target = target,
         .registry = b.path("vk.xml"),
     });
-    lib.addImport("vulkan", vulkan.module("vulkan-zig"));
+    root_module.addImport("vulkan", vulkan.module("vulkan-zig"));
+
+    // If we're compiling to .so, link vulkan and install
+    if (lib_artifact_opt) |lib_artifact| {
+        lib_artifact.linkSystemLibrary("vulkan");
+        b.installArtifact(lib_artifact);
+        b.installFile("include/fidelitty.h", "include/fidelitty.h");
+    }
 
 
     // ============ run example exe =============
@@ -140,7 +157,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .target = target,
             .root_source_file = b.path("examples/render_image.zig"),
-            .imports = &.{ .{ .name = "fidelitty", .module = lib} },
+            .imports = &.{ .{ .name = "fidelitty", .module = root_module} },
         })
     });
 

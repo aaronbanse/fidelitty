@@ -34,7 +34,8 @@ pub const UnicodeImage = struct {
     buf: []u8,
     
     pub fn init(alloc: mem.Allocator, w: u16, h: u16) !@This() {
-        const img: @This() = undefined;
+        var img: @This() = undefined;
+
         img.buf = try alloc.alloc(u8, getSize(w, h));
         img.x = 0;
         img.y = 0;
@@ -42,6 +43,8 @@ pub const UnicodeImage = struct {
         img.height = h;
         img.fillTemplate();
         img.writeRowPositions();
+
+        return img;
     }
 
     pub fn resize(self: *@This(), alloc: mem.Allocator, w: u16, h: u16) !void {
@@ -65,10 +68,11 @@ pub const UnicodeImage = struct {
         self.writeRowPositions();
     }
 
-    pub fn readPixelBuf(self: @This(), w: u16, h: u16, buf: [*]UnicodePixelData) void {
-        for (0..h) |y| {
-            for (0..w) |x| {
-                self.writePixel(buf[y * w + x], @intCast(x), @intCast(y));
+    // unsafe, assumes pixel buf and image are same dimensions
+    pub fn readPixels(self: @This(), pixels: [*]UnicodePixelData) void {
+        for (0..self.height) |y| {
+            for (0..self.width) |x| {
+                self.writePixel(pixels[y * self.width + x], @intCast(x), @intCast(y));
             }
         }
     }
