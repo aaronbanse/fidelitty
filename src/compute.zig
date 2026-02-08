@@ -213,7 +213,7 @@ pub const Context = struct {
 
         try self.createComputePipeline(&resources);
 
-        try self.createPipelineCommandBuffer(&resources, im_w, im_h);
+        try self.allocatePipelineCommandResources(&resources);
 
         // obtain unique id for handle
         var id: usize = 1;
@@ -226,35 +226,40 @@ pub const Context = struct {
         return handle;
     }
 
-    pub fn executeRenderPipelines(self: @This(), handles: []const PipelineHandle) !void {
-        for (handles) |handle| {
-            const res: PipelineResources = self._pipelines.get(handle._id)
-                orelse return error.InvalidPipelineHandle;
-
-            try self._device.resetFences(1, &.{res.pipeline_complete});
-
-            try self._device.queueSubmit(
-                self._queue,
-                1, &[_]vk.SubmitInfo{.{
-                    .command_buffer_count = 1,
-                    .p_command_buffers = @ptrCast(&res.cmd_buf),
-                    .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
-                }},
-                res.pipeline_complete,
-            );
-        }
+    pub fn executeRenderPipelineAll(self: *@This(), handle: PipelineHandle) !void {
+        return self.executeRenderPipelineRegion(handle, 0, 0, handle.out_im_w, handle.out_im_h);
     }
 
-    pub fn waitRenderPipelines(self: @This(), handles: []const PipelineHandle) !void {
+    pub fn executeRenderPipelineRegion(
+        self: *@This(),
+        handle: PipelineHandle,
+        dispatch_x: u16, dispatch_y: u16,
+        dispatch_w: u16, dispatch_h: u16,
+    ) !void {
+        const res: PipelineResources = self._pipelines.get(handle._id)
+            orelse return error.InvalidPipelineHandle;
+
+        try self.recordPipelineCommandBuffer(
+            res, handle.out_im_w, dispatch_x, dispatch_y, dispatch_w, dispatch_h,
+        );
+
+        try self._device.resetFences(1, &.{res.pipeline_complete});
+
+        try self._device.queueSubmit(
+            self._queue,
+            1, &[_]vk.SubmitInfo{.{
+                .command_buffer_count = 1,
+                .p_command_buffers = @ptrCast(&res.cmd_buf),
+                .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
+            }},
+            res.pipeline_complete,
+        );
+    }
+
+    pub fn waitRenderPipeline(self: @This(), handle: PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
-        var fences: [32]vk.Fence = undefined;
-
-        for (handles, 0..) |handle, i| {
-            const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
-            fences[i] = res.pipeline_complete;
-        }
-
-        _ = try self._device.waitForFences(@intCast(handles.len), @ptrCast(&fences), .true, timeout);
+        const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
+        _ = try self._device.waitForFences(1, @ptrCast(&res.pipeline_complete), .true, timeout);
     }
 
     pub fn resizeRenderPipeline(
@@ -265,7 +270,7 @@ pub const Context = struct {
         const res = self._pipelines.getPtr(handle._id) orelse return error.InvalidPipelineHandle;
 
         // wait for work on this pipeline to complete
-        try self.waitRenderPipelines(&.{handle.*});
+        try self.waitRenderPipeline(handle.*);
 
         // Calculate new sizes
         const new_input_size = 3 * @as(usize, new_w) * @as(usize, new_h) * @as(usize, self._patch_w) * @as(usize, self._patch_h) * @sizeOf(u8);
@@ -323,8 +328,8 @@ pub const Context = struct {
         // Remap CPU buffers to handle
         try self.mapCpuBuffersToHandle(res, &handle.input_surface, &handle.output_surface);
 
-        // Recreate command buffer with new dimensions
-        try self.createPipelineCommandBuffer(res, new_w, new_h);
+        // Reallocate command buffer and fence
+        try self.allocatePipelineCommandResources(res);
 
         // Update handle dimensions
         handle.out_im_w = new_w;
@@ -403,7 +408,7 @@ pub const Context = struct {
     fn createCommandPool(self: *@This(), compute_queue_fam_index: u32) !void {
         self._cmd_pool = try self._device.createCommandPool(&.{
             .queue_family_index = compute_queue_fam_index,
-            .flags = .{},
+            .flags = .{ .reset_command_buffer_bit = true },
         }, null);
     }
 
@@ -477,7 +482,7 @@ pub const Context = struct {
             .p_push_constant_ranges = &[_]vk.PushConstantRange{.{
                 .stage_flags = .{ .compute_bit = true },
                 .offset = 0,
-                .size = 8, // 2 x u32
+                .size = @sizeOf(PushConstants),
             }},
         }, null);
     }
@@ -803,17 +808,30 @@ pub const Context = struct {
     const PushConstants = extern struct {
         num_codepoints: u32,
         out_im_w: u32,
+        dispatch_x: u32,
+        dispatch_y: u32,
+        dispatch_w: u32,
+        dispatch_h: u32,
     };
 
-    fn createPipelineCommandBuffer(self: *@This(), res: *PipelineResources, im_w: u32, im_h: u32) !void {
-        // allocate buffer
+    fn allocatePipelineCommandResources(self: *@This(), res: *PipelineResources) !void {
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
             .level = .primary,
             .command_buffer_count = 1,
         }, @ptrCast(&res.cmd_buf));
 
-        // record instructions
+        res.pipeline_complete = try self._device.createFence(&.{}, null);
+    }
+
+    fn recordPipelineCommandBuffer(
+        self: *@This(),
+        res: PipelineResources,
+        out_im_w: u32,
+        dispatch_x: u32, dispatch_y: u32,
+        dispatch_w: u32, dispatch_h: u32,
+    ) !void {
+        try self._device.resetCommandBuffer(res.cmd_buf, .{});
         try self._device.beginCommandBuffer(res.cmd_buf, &.{});
 
         // copy CPU to GPU
@@ -845,7 +863,11 @@ pub const Context = struct {
         // upload uniforms as push constants
         const push = PushConstants{
             .num_codepoints = self._num_codepoints,
-            .out_im_w = im_w,
+            .out_im_w = out_im_w,
+            .dispatch_x = dispatch_x,
+            .dispatch_y = dispatch_y,
+            .dispatch_w = dispatch_w,
+            .dispatch_h = dispatch_h,
         };
 
         self._device.cmdPushConstants(
@@ -867,7 +889,7 @@ pub const Context = struct {
 
         // Dispatch compute- local_size_x = 64 in glsl
         const work_group_size: u32 = 64;
-        const num_work_groups = try std.math.divCeil(u32, im_w * im_h, work_group_size);
+        const num_work_groups = try std.math.divCeil(u32, dispatch_w * dispatch_h, work_group_size);
         self._device.cmdDispatch(res.cmd_buf, num_work_groups, 1, 1);
 
         // memory barrier to ensure compute is complete before readback to cpu
@@ -895,9 +917,6 @@ pub const Context = struct {
         });
 
         try self._device.endCommandBuffer(res.cmd_buf);
-
-        // create fence so cpu can wait on completion
-        res.pipeline_complete = try self._device.createFence(&.{}, null);
     }
 
     fn createComputePipeline(self: *@This(), res: *PipelineResources) !void {

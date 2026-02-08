@@ -73,10 +73,10 @@ pub fn main() !void {
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
     // run pipeline
-    try compute_context.executeRenderPipelines(&.{pipeline_handle});
+    try compute_context.executeRenderPipelineAll(pipeline_handle);
 
     // wait on completion
-    try compute_context.waitRenderPipelines(&.{pipeline_handle});
+    try compute_context.waitRenderPipeline(pipeline_handle);
 
     out_image.readPixels(pipeline_handle.output_surface);
     try out_image.draw();
@@ -113,10 +113,10 @@ pub fn main() !void {
     }
 
     // run pipeline
-    try compute_context.executeRenderPipelines(&.{pipeline_handle});
+    try compute_context.executeRenderPipelineAll(pipeline_handle);
 
     // wait on completion
-    try compute_context.waitRenderPipelines(&.{pipeline_handle});
+    try compute_context.waitRenderPipeline(pipeline_handle);
 
     // render
     out_image.readPixels(pipeline_handle.output_surface);

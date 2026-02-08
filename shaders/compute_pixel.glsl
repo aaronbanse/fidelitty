@@ -51,6 +51,10 @@ layout(std430, set = 1, binding = 1) buffer OutputImage { UnicodePixel[] pixels;
 layout(push_constant) uniform PushConstants {
     uint num_codepoints;
     uint out_im_w;
+    uint dispatch_x;
+    uint dispatch_y;
+    uint dispatch_w;
+    uint dispatch_h;
 } pc;
 
 // RGB values of a 4x4 patch of the input image. One processed per invocation
@@ -79,10 +83,13 @@ void main() {
   // then we need to figure out the packing on unicodePixels
   // identify patch we're working on
 
-  // Calculate indices
-  const uint out_idx = gl_GlobalInvocationID.x;
-  const uint out_x = out_idx % pc.out_im_w;
-  const uint out_y = out_idx / pc.out_im_w;
+  // Calculate indices within dispatch region
+  const uint local_idx = gl_GlobalInvocationID.x;
+  if (local_idx >= pc.dispatch_w * pc.dispatch_h) return;
+
+  const uint out_x = (local_idx % pc.dispatch_w) + pc.dispatch_x;
+  const uint out_y = (local_idx / pc.dispatch_w) + pc.dispatch_y;
+  const uint out_idx = out_y * pc.out_im_w + out_x;
 
   const uint in_x = out_x * 4;
   const uint in_y = out_y * 4;

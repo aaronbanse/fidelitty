@@ -81,7 +81,9 @@ int main(void) {
     ftty_unicode_image_set_pos(out_image, cursor_pos.col, cursor_pos.row);
 
     // run pipeline
-    ftty_context_execute_render_pipeline(ctx, pipeline);
+    ftty_context_execute_render_pipeline_region(ctx, pipeline,
+                                                out_image_w / 2, out_image_h / 2,
+                                                out_image_w / 2, out_image_h / 2);
 
     // wait on completion
     ftty_context_wait_render_pipeline(ctx, pipeline);
@@ -123,7 +125,7 @@ int main(void) {
     }
 
     // run pipeline
-    ftty_context_execute_render_pipeline(ctx, pipeline);
+    ftty_context_execute_render_pipeline_all(ctx, pipeline);
 
     // wait on completion
     ftty_context_wait_render_pipeline(ctx, pipeline);

@@ -70,15 +70,40 @@ pub const UnicodeImage = struct {
 
     // unsafe, assumes pixel buf and image are same dimensions
     pub fn readPixels(self: @This(), pixels: [*]UnicodePixelData) void {
-        for (0..self.height) |y| {
-            for (0..self.width) |x| {
-                self.writePixel(pixels[y * self.width + x], @intCast(x), @intCast(y));
+        self.readPixelsRegion(pixels, 0, 0, self.width, self.height);
+    }
+
+    pub fn readPixelsRegion(self: @This(), pixels: [*]UnicodePixelData, rx: u16, ry: u16, rw: u16, rh: u16) void {
+        for (0..rh) |i| {
+            const y: u16 = ry + @as(u16, @intCast(i));
+            for (0..rw) |j| {
+                const x: u16 = rx + @as(u16, @intCast(j));
+                self.writePixel(pixels[y * self.width + x], x, y);
             }
         }
     }
 
     pub fn draw(self: @This()) !void {
         _ = try std.posix.write(1, self.buf);
+    }
+
+    pub fn drawRegion(self: @This(), rx: u16, ry: u16, rw: u16, rh: u16) !void {
+        _ = try std.posix.write(1, BEGIN_SYNC_SEQ);
+        var cursor_buf: [SET_CURSOR_SEQ_TEMPLATE.len]u8 = undefined;
+        @memcpy(&cursor_buf, SET_CURSOR_SEQ_TEMPLATE);
+        for (0..rh) |i| {
+            const y: u16 = ry + @as(u16, @intCast(i));
+            // write cursor position for this row
+            _ = std.fmt.printInt(cursor_buf[2..], self.y + y + 1, 10, .lower, .{ .fill = 48, .width = 3 });
+            _ = std.fmt.printInt(cursor_buf[6..], self.x + rx + 1, 10, .lower, .{ .fill = 48, .width = 3 });
+            _ = try std.posix.write(1, &cursor_buf);
+            // write pixel data for columns [rx, rx+rw)
+            const row_start = BEGIN_SYNC_SEQ.len + @as(usize, y) * getRowSize(self.width);
+            const pixels_start = row_start + SET_CURSOR_SEQ_TEMPLATE.len + @as(usize, rx) * PIXEL_STR_TEMPLATE.len;
+            const pixels_end = pixels_start + @as(usize, rw) * PIXEL_STR_TEMPLATE.len;
+            _ = try std.posix.write(1, self.buf[pixels_start..pixels_end]);
+        }
+        _ = try std.posix.write(1, END_SYNC_SEQ);
     }
 
     fn writePixel(self: @This(), data: UnicodePixelData, x: u16, y: u16) void {

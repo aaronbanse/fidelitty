@@ -29,14 +29,10 @@ const dataset_config_ = @import("dataset_config");
 
 // ================== ZIG API ====================
 
+// =============== Core (headless) ================
+
 /// Build-time configuration containing important metadata constants for the glyph dataset
 pub const dataset_config = dataset_config_;
-
-/// Utility functions for querying and manipulating the terminal
-pub const terminal = terminal_;
-
-/// Struct storing data for a ready-to-print image, and exposing methods for init / deinit, resizing, and read / write operations
-pub const UnicodeImage = unicode_.UnicodeImage;
 
 /// Struct storing data needed to construct one unicode pixel in a UnicodeImage
 pub const UnicodePixelData = unicode_.UnicodePixelData;
@@ -50,12 +46,23 @@ pub const PipelineHandle = compute_.PipelineHandle;
 // In the future, I will add support for attaching the context to an existing Vulkan instance,
 // allowing this library to be used a postprocessing step with data passed directly through the gpu.
 
+// =============== Terminal frontend ================
+// NOTE: The terminal frontend is experimental and has known bugs.
+
+/// Utility functions for querying and manipulating the terminal
+pub const terminal = terminal_;
+
+/// Struct storing data for a ready-to-print image, and exposing methods for init / deinit, resizing, and read / write operations
+pub const UnicodeImage = unicode_.UnicodeImage;
+
 
 // =============== DEFINITIONS FOR C API ===============
 
 // TODO: add double-buffering support - unclear how this should work just yet
 
 const c_allocator = @import("std").heap.c_allocator;
+
+// =============== Core (headless) ================
 
 // CONTEXT MANAGEMENT
 
@@ -96,15 +103,26 @@ export fn ftty_context_resize_render_pipeline(ctx: *ComputeContext, pipeline: *P
     return 0;
 }
 
-export fn ftty_context_execute_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.c) i32 {
-    ctx.executeRenderPipelines(pipeline[0..1]) catch {
+export fn ftty_context_execute_render_pipeline_all(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.c) i32 {
+    ctx.executeRenderPipelineAll(pipeline.*) catch {
+        return -1;
+    };
+    return 0;
+}
+
+export fn ftty_context_execute_render_pipeline_region(
+    ctx: *ComputeContext, pipeline: *PipelineHandle,
+    dispatch_x: u16, dispatch_y: u16,
+    dispatch_w: u16, dispatch_h: u16,
+) callconv(.c) i32 {
+    ctx.executeRenderPipelineRegion(pipeline.*, dispatch_x, dispatch_y, dispatch_w, dispatch_h) catch {
         return -1;
     };
     return 0;
 }
 
 export fn ftty_context_wait_render_pipeline(ctx: *ComputeContext, pipeline: *PipelineHandle) callconv(.c) i32 {
-    ctx.waitRenderPipelines(pipeline[0..1]) catch {
+    ctx.waitRenderPipeline(pipeline.*) catch {
         return -1;
     };
     return 0;
@@ -124,6 +142,19 @@ export fn ftty_pipeline_get_input_surface(pipeline: *PipelineHandle) callconv(.c
 export fn ftty_pipeline_get_output_surface(pipeline: *PipelineHandle) callconv(.c) [*]UnicodePixelData {
     return @ptrCast(pipeline.output_surface);
 }
+
+// DATASET CONFIG
+
+export fn ftty_get_patch_width() callconv(.c) u8 {
+    return dataset_config.patch_width;
+}
+
+export fn ftty_get_patch_height() callconv(.c) u8 {
+    return dataset_config.patch_height;
+}
+
+// =============== Terminal frontend ================
+// NOTE: The terminal frontend is experimental and has known bugs.
 
 // UNICODE IMAGE MANAGEMENT
 
@@ -156,6 +187,10 @@ export fn ftty_unicode_image_read_pixels(img: *UnicodeImage, pixels: [*]UnicodeP
     img.readPixels(pixels);
 }
 
+export fn ftty_unicode_image_read_pixels_region(img: *UnicodeImage, pixels: [*]UnicodePixelData, x: u16, y: u16, w: u16, h: u16) void {
+    img.readPixelsRegion(pixels, x, y, w, h);
+}
+
 export fn ftty_unicode_image_draw(img: *UnicodeImage) i32 {
     img.draw() catch {
         return -1;
@@ -163,14 +198,11 @@ export fn ftty_unicode_image_draw(img: *UnicodeImage) i32 {
     return 0;
 }
 
-// DATASET CONFIG
-
-export fn ftty_get_patch_width() callconv(.c) u8 {
-    return dataset_config.patch_width;
-}
-
-export fn ftty_get_patch_height() callconv(.c) u8 {
-    return dataset_config.patch_height;
+export fn ftty_unicode_image_draw_region(img: *UnicodeImage, x: u16, y: u16, w: u16, h: u16) i32 {
+    img.drawRegion(x, y, w, h) catch {
+        return -1;
+    };
+    return 0;
 }
 
 // TERMINAL UTILITIES
