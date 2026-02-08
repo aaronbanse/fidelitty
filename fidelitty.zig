@@ -162,3 +162,53 @@ export fn ftty_unicode_image_draw(img: *UnicodeImage) i32 {
     };
     return 0;
 }
+
+// DATASET CONFIG
+
+export fn ftty_get_patch_width() callconv(.c) u8 {
+    return dataset_config.patch_width;
+}
+
+export fn ftty_get_patch_height() callconv(.c) u8 {
+    return dataset_config.patch_height;
+}
+
+// TERMINAL UTILITIES
+
+const TermDims = extern struct {
+    cols: u16,
+    rows: u16,
+    cell_w: u16,
+    cell_h: u16,
+};
+
+const CursorPos = extern struct {
+    row: u16,
+    col: u16,
+};
+
+export fn ftty_terminal_get_dims() callconv(.c) TermDims {
+    const dims = terminal.getDims();
+    return .{
+        .cols = dims.cols,
+        .rows = dims.rows,
+        .cell_w = dims.cell_w,
+        .cell_h = dims.cell_h,
+    };
+}
+
+export fn ftty_terminal_reserve_vertical_space(rows: u16) callconv(.c) i32 {
+    terminal_.reserveVerticalSpace(rows) catch {
+        return -1;
+    };
+    return 0;
+}
+
+export fn ftty_terminal_get_cursor_pos(pos: *CursorPos) callconv(.c) i32 {
+    const result = terminal.getCursorPos() catch {
+        return -1;
+    };
+    pos.row = result.row;
+    pos.col = result.col;
+    return 0;
+}

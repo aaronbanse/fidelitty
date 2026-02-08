@@ -150,29 +150,55 @@ pub fn build(b: *std.Build) void {
 
     // ============ run example exe =============
 
-    // create render image executable
-    const img_exe = b.addExecutable(.{
-        .name = "img-example",
-        .root_module = b.createModule(.{
-            .optimize = optimize,
-            .target = target,
-            .root_source_file = b.path("examples/render_image.zig"),
-            .imports = &.{ .{ .name = "fidelitty", .module = root_module} },
-        })
-    });
+    const example_lang = b.option(enum { zig, c }, "example", "Which language version of the example to build and run (zig or c)") orelse .zig;
+
+    const img_exe = switch (example_lang) {
+        .zig => blk: {
+            const exe = b.addExecutable(.{
+                .name = "img-example",
+                .root_module = b.createModule(.{
+                    .optimize = optimize,
+                    .target = target,
+                    .root_source_file = b.path("examples/render_image.zig"),
+                    .imports = &.{ .{ .name = "fidelitty", .module = root_module} },
+                })
+            });
+            exe.linkSystemLibrary("vulkan");
+            break :blk exe;
+        },
+        .c => blk: {
+            const fidelitty_lib = b.addLibrary(.{
+                .name = "fidelitty",
+                .root_module = root_module,
+                .linkage = .static,
+            });
+            fidelitty_lib.linkSystemLibrary("vulkan");
+
+            const exe = b.addExecutable(.{
+                .name = "img-example",
+                .root_module = b.createModule(.{
+                    .optimize = optimize,
+                    .target = target,
+                    .link_libc = true,
+                })
+            });
+            exe.addCSourceFile(.{.file = b.path("examples/render_image.c")});
+            exe.addIncludePath(b.path("include/"));
+            exe.linkLibrary(fidelitty_lib);
+            exe.linkSystemLibrary("vulkan");
+            break :blk exe;
+        },
+    };
 
     // Compile stb_image
     img_exe.addIncludePath(b.path("examples/"));
     img_exe.addCSourceFile(.{.file=b.path("examples/stb_image_impl.c")});
 
-    // Link Vulkan
-    img_exe.linkSystemLibrary("vulkan");
-
     // Install binary to zig-out
     b.installArtifact(img_exe);
 
     const run_exe = b.addRunArtifact(img_exe);
-    const run_step = b.step("run-img-ex", "Run the application");
+    const run_step = b.step("run-img-ex", "Run the example");
     run_step.dependOn(&run_exe.step);
 }
 
