@@ -12,6 +12,11 @@ This library uses Zig ```0.15.2```. Currently only Linux is supported. Available
   <img src="examples/assets/example-output.png" width="600" alt="Terminal render example">
 </p>
 
+<p align="center">
+  <img src="examples/assets/primeagen-high-res.png" width="600" alt="Carbonyl browser using fidelitty algo, watching youtube at 60 fps">
+  Watching the primeagen at 60 fps using my fork of carbonyl.
+</p>
+
 #### Features
 
 - Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
