@@ -14,7 +14,10 @@ This library uses Zig ```0.15.2```. Currently only Linux is supported. Available
 
 <p align="center">
   <img src="examples/assets/primeagen-high-res.png" width="600" alt="Carbonyl browser using fidelitty algo, watching youtube at 60 fps">
-  Watching the primeagen at 60 fps using my fork of carbonyl.
+</p>
+
+<p align="center">
+  Watching the primeagen at 60fps using my fork of the carbonyl browser: <a href="https://github.com/aaronbanse/carbonyl-ftty">carbonyl-ftty</a>.
 </p>
 
 #### Features
