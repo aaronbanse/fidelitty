@@ -29,7 +29,6 @@ This library uses Zig ```0.15.2```. Currently only Linux is supported. Available
 #### Limitations
 
 - Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
-- No way to compile as a shared library and link with a C header just yet.
 - No way to attach to an existing Vulkan instance just yet, must create a standalone context and transfer data over the cpu.
 - The terminal frontend is experimental and buggy.
 
