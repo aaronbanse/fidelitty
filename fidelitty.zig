@@ -9,23 +9,6 @@ const dataset_config_ = @import("dataset_config");
 // You may notice the absence of glyph.zig in the imports.
 // Glyph data is baked into compute.zig at compile time, so it can be configured using the build system.
 
-// ================================================================================================
-//
-// NOTE: there is a current flaw in the API that needs to be addressed.
-//
-// I have not set up the ability for the compute shader to write to a UnicodeImage directly,
-// so the conversion from an array of UnicodePixelData structs to a single UnicodeImage
-// is handled on the cpu by the user, using the readPixelBuf method.
-//
-// As a consequence, the user is responsible for calling init / deinit / resize methods on the image,
-// in concert with the associated Context methods for managing render pipelines.
-//
-// In the future, this will be changed so that a render pipeline outputs a UnicodeImage directly,
-// and will tie the operations for managing resources together.
-// This will allow us to remove UnicodePixelData from the API.
-//
-// ================================================================================================
-
 
 // ================== ZIG API ====================
 
