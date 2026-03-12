@@ -58,7 +58,7 @@ pub const GlyphMaskGenerator = struct {
     
     // specify aspect ratio
     pub fn initWithAspect(allocator: mem.Allocator, font_path: []const u8, aspect: f32) !GlyphMaskGenerator {
-        const font_dir = try fs.openDirAbsolute("/usr/share/fonts", .{});
+        const font_dir = try fs.openDirAbsolute("/home/acbanse/.local/share/fonts", .{});
         const font_data = try font_dir.readFileAlloc(allocator, font_path, MAX_FONT_FILE_SIZE);
         var font: c.stbtt_fontinfo = undefined;
         if (c.stbtt_InitFont(&font, font_data.ptr, 0) == 0) {

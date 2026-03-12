@@ -23,6 +23,8 @@ def main():
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--data-root", type=str, default="./data")
     parser.add_argument("--device", type=str, default=None)
+    parser.add_argument("--patch-w", type=int, default=4, help="Patch width")
+    parser.add_argument("--patch-h", type=int, default=4, help="Patch height")
     args = parser.parse_args()
 
     device = torch.device(
@@ -32,7 +34,8 @@ def main():
     )
     print(f"Using device: {device}")
 
-    dataset = PatchDataset(root=args.data_root, max_images=args.max_images)
+    dataset = PatchDataset(root=args.data_root, max_images=args.max_images,
+                           patch_w=args.patch_w, patch_h=args.patch_h)
     loader = DataLoader(
         dataset,
         batch_size=args.batch_size,
@@ -42,7 +45,7 @@ def main():
         persistent_workers=True,
     )
 
-    model = GlyphPredictor().to(device)
+    model = GlyphPredictor(patch_w=args.patch_w, patch_h=args.patch_h).to(device)
     param_count = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {param_count:,}")
 
@@ -100,6 +103,8 @@ def main():
             path = os.path.join(args.checkpoint_dir, f"glyph_predictor_ep{epoch+1}.pt")
             torch.save({
                 "epoch": epoch + 1,
+                "patch_w": args.patch_w,
+                "patch_h": args.patch_h,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
                 "loss": avg_loss,

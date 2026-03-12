@@ -1,4 +1,4 @@
-"""GlyphPredictor MLP: predicts optimal 4x4 grayscale mask for a given RGB patch."""
+"""GlyphPredictor MLP: predicts optimal grayscale mask for a given RGB patch."""
 
 import torch
 import torch.nn as nn
@@ -16,27 +16,30 @@ class ResidualBlock(nn.Module):
 
 
 class GlyphPredictor(nn.Module):
-    """MLP that maps a (B, 3, 4, 4) RGB patch to a (B, 16) grayscale mask."""
+    """MLP that maps a (B, 3, patch_h, patch_w) RGB patch to a (B, n_pixels) grayscale mask."""
 
-    def __init__(self, hidden_dim: int = 64, num_res_blocks: int = 3):
+    def __init__(self, patch_w: int = 4, patch_h: int = 4, hidden_dim: int = 64, num_res_blocks: int = 3):
         super().__init__()
+        self.patch_w = patch_w
+        self.patch_h = patch_h
+        n_pixels = patch_w * patch_h
         self.input_proj = nn.Sequential(
-            nn.Linear(48, hidden_dim),
+            nn.Linear(3 * n_pixels, hidden_dim),
             nn.GELU(),
         )
         self.res_blocks = nn.Sequential(
             *[ResidualBlock(hidden_dim) for _ in range(num_res_blocks)]
         )
-        self.output_proj = nn.Linear(hidden_dim, 16)
+        self.output_proj = nn.Linear(hidden_dim, n_pixels)
 
     def forward(self, patches: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            patches: (B, 3, 4, 4) in [0, 255]
+            patches: (B, 3, patch_h, patch_w) in [0, 255]
         Returns:
-            (B, 16) mask values in [0, 1]
+            (B, n_pixels) mask values in [0, 1]
         """
-        x = patches.reshape(patches.shape[0], -1)  # (B, 48)
+        x = patches.reshape(patches.shape[0], -1)
         x = self.input_proj(x)
         x = self.res_blocks(x)
         x = torch.sigmoid(self.output_proj(x))

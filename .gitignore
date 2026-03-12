@@ -1,5 +1,7 @@
 /.zig-cache
 /zig-out
+/data
+/checkpoints
 *.o
 *.txt
 *.sh

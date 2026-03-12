@@ -12,6 +12,7 @@ from model import GlyphPredictor
 def reconstruct(pos, patches):
     """Reconstruct patches using predicted masks and optimal fg/bg colors."""
     B = pos.shape[0]
+    n_pixels = pos.shape[1]
     neg = 1.0 - pos
 
     BB = (neg * neg).sum(dim=1)
@@ -19,7 +20,7 @@ def reconstruct(pos, patches):
     BF = (neg * pos).sum(dim=1)
     det = FF * BB - BF * BF + 1e-8
 
-    flat = patches.reshape(B, 3, 16)
+    flat = patches.reshape(B, 3, n_pixels)
     p_dot_neg = (flat * neg.unsqueeze(1)).sum(dim=2)
     p_dot_pos = (flat * pos.unsqueeze(1)).sum(dim=2)
 
@@ -28,7 +29,7 @@ def reconstruct(pos, patches):
     c_fore = torch.clamp((p_dot_pos * BB.unsqueeze(1) - p_dot_neg * BF.unsqueeze(1)) / det_, 0, 255)
 
     recon = c_back.unsqueeze(2) * neg.unsqueeze(1) + c_fore.unsqueeze(2) * pos.unsqueeze(1)
-    return recon.reshape(B, 3, 4, 4)
+    return recon.reshape_as(patches)
 
 
 def main():
@@ -40,10 +41,14 @@ def main():
     parser.add_argument("--out", type=str, default="result.png", help="Output file path")
     args = parser.parse_args()
 
-    dataset = PatchDataset(root=args.data_root, max_images=args.max_images)
-
-    model = GlyphPredictor()
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+    patch_w = ckpt.get("patch_w", 4)
+    patch_h = ckpt.get("patch_h", 4)
+
+    dataset = PatchDataset(root=args.data_root, max_images=args.max_images,
+                           patch_w=patch_w, patch_h=patch_h)
+
+    model = GlyphPredictor(patch_w=patch_w, patch_h=patch_h)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
 
@@ -63,7 +68,7 @@ def main():
         axes[0, i].axis("off")
 
         # Predicted mask
-        mask = masks[i].reshape(4, 4).numpy()
+        mask = masks[i].reshape(patch_h, patch_w).numpy()
         axes[1, i].imshow(mask, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
         axes[1, i].axis("off")
 

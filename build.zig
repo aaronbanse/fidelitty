@@ -8,20 +8,11 @@ pub fn build(b: *std.Build) void {
 
     // Define set of unicode characters used to compose images
     // This set consist of characters in the range [0x2500, 0x25ff] and [0x2800, 0x28ff]
-    const u8_vals: u32 = math.maxInt(u8) + 1;
-    const CHARACTER_SET_SIZE: u32 = u8_vals * 2;
+    const CHARACTER_SET_SIZE: u32 = 2048;
 
     var codepoints: [CHARACTER_SET_SIZE]u32 = undefined;
-    for (0..u8_vals) |n| {
-        // [0x2800, 0x28ff]
-        codepoints[n] = 0x2800 + @as(u16, @intCast(n));
-
-        // [0x2500, 0x25ff] - {0x2591, 0x2592, 0x2593}
-        if (n == 0x91 or n == 0x92 or n == 0x93) { // these characters caused visual issues for whatever reason
-            codepoints[n+u8_vals] = 0x2500; // simpler to default than to omit completely
-        } else {
-            codepoints[n+u8_vals] = 0x2500 + @as(u16, @intCast(n));
-        }
+    for (0..CHARACTER_SET_SIZE) |n| {
+        codepoints[n] = 0xF5000 + @as(u32, @intCast(n));
     }
 
     // Compression constants - how many virtual pixels does a unicode character represent
@@ -37,8 +28,8 @@ pub fn build(b: *std.Build) void {
     // File identifier used to embed the dataset into the binary
     const DATASET_FILE_IDENTIFIER = "glyph-dataset";
 
-    // Font path from root /usr/share/fonts/
-    const FONT_PATH = "Adwaita/AdwaitaMono-Regular.ttf";
+    // Font path from root ~/.local/share/fonts
+    const FONT_PATH = "fidelitty/fidelitty.ttf";
 
 
     // BUILT-IN - modify at your own risk
