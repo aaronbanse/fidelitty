@@ -79,14 +79,14 @@ pub fn main() !void {
     try compute_context.waitRenderPipeline(pipeline_handle);
 
     out_image.readPixels(pipeline_handle.output_surface);
-    try out_image.draw();
+    out_image.dumpRaw();
 
     // resize and reposition the image to overlap the other image
     const out_image_w_small = out_image_w / 2;
     const out_image_h_small = out_image_h / 2;
     try ftty.terminal.reserveVerticalSpace(out_image_h_small -| 20);
     cursor_pos = try ftty.terminal.getCursorPos();
-    out_image.setPos(cursor_pos.col + 90, cursor_pos.row -| 20);
+    out_image.setPos(cursor_pos.col + 50, cursor_pos.row -| 20);
     try out_image.resize(allocator, out_image_w_small, out_image_h_small);
 
     // resize the pipeline - will be tied to the image in the future
@@ -120,5 +120,5 @@ pub fn main() !void {
 
     // render
     out_image.readPixels(pipeline_handle.output_surface);
-    try out_image.draw();
+    // try out_image.dumpRaw();
 }

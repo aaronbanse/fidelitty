@@ -1,4 +1,4 @@
-"""Build a test font with one glyph per quantize level, then render them all."""
+"""Build a test font with binary glyphs, then render them."""
 
 import os
 import subprocess
@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from font import CODEPOINT_START_IDX, build_font
 
-LEVELS = [0, 0.25, 0.5, 0.75, 1.0]
+LEVELS = [0, 1]
 
 
 def main():

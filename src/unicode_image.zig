@@ -87,6 +87,26 @@ pub const UnicodeImage = struct {
         _ = try std.posix.write(1, self.buf);
     }
 
+    /// Dump raw pixel data from the internal buffer to stderr for debugging.
+    /// Prints row, col, bg/fg rgb, and the raw utf-8 bytes for each pixel.
+    pub fn dumpRaw(self: @This()) void {
+        for (0..self.height) |row| {
+            for (0..self.width) |col| {
+                const pix_index = BEGIN_SYNC_SEQ.len
+                    + row * getRowSize(self.width)
+                    + SET_CURSOR_SEQ_TEMPLATE.len
+                    + col * PIXEL_STR_TEMPLATE.len;
+                const pixel = self.buf[pix_index..][0..PIXEL_STR_TEMPLATE.len];
+                std.debug.print("{d},{d} bg=({s},{s},{s}) fg=({s},{s},{s}) utf8={X:0>2} {X:0>2} {X:0>2} {X:0>2}\n", .{
+                    row, col,
+                    pixel[7..10], pixel[11..14], pixel[15..18],
+                    pixel[26..29], pixel[30..33], pixel[34..37],
+                    pixel[38], pixel[39], pixel[40], pixel[41],
+                });
+            }
+        }
+    }
+
     pub fn drawRegion(self: @This(), rx: u16, ry: u16, rw: u16, rh: u16) !void {
         _ = try std.posix.write(1, BEGIN_SYNC_SEQ);
         var cursor_buf: [SET_CURSOR_SEQ_TEMPLATE.len]u8 = undefined;

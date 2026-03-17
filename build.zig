@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
 
     // Define set of unicode characters used to compose images
     // This set consist of characters in the range [0x2500, 0x25ff] and [0x2800, 0x28ff]
-    const CHARACTER_SET_SIZE: u32 = 2048;
+    const CHARACTER_SET_SIZE: u32 = 4096;
 
     var codepoints: [CHARACTER_SET_SIZE]u32 = undefined;
     for (0..CHARACTER_SET_SIZE) |n| {
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     }
 
     // Compression constants - how many virtual pixels does a unicode character represent
-    const PATCH_WIDTH = 4;
+    const PATCH_WIDTH = 3;
     const PATCH_HEIGHT = 4;
 
     // Raw byte file containing all unicode codepoints. Embedded in gen-dataset executable.
@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
     const DATASET_FILE_IDENTIFIER = "glyph-dataset";
 
     // Font path from root ~/.local/share/fonts
-    const FONT_PATH = "fidelitty/fidelitty.ttf";
+    const FONT_PATH = "fidelitty/fidelitty_3x4.ttf";
 
 
     // BUILT-IN - modify at your own risk
