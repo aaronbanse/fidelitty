@@ -1,13 +1,13 @@
 const std = @import("std");
 const posix = std.posix;
-const fs = std.fs;
+const Io = std.Io;
 const mem = std.mem;
 const fmt = std.fmt;
 const debug = std.debug;
 
-pub fn getCursorPos() !struct { row: u16, col: u16 } {
-    const stdin = fs.File.stdin();
-    const stdout = fs.File.stdout();
+pub fn getCursorPos(io: Io) !struct { row: u16, col: u16 } {
+    const stdin = Io.File.stdin();
+    const stdout = Io.File.stdout();
     
     // Save original termios and switch to raw mode
     const orig = try posix.tcgetattr(stdin.handle);
@@ -18,13 +18,13 @@ pub fn getCursorPos() !struct { row: u16, col: u16 } {
     defer posix.tcsetattr(stdin.handle, .FLUSH, orig) catch {};
 
     // Send DSR query
-    try stdout.writeAll("\x1b[6n");
+    try stdout.writeStreamingAll(io, "\x1b[6n");
 
     // Read response: \x1b[row;colR
     var buf: [32]u8 = undefined;
     var len: usize = 0;
     while (len < buf.len) {
-        const n = try stdin.read(buf[len .. len + 1]);
+        const n = try stdin.readStreaming(io, &.{buf[len .. len + 1]});
         if (n == 0) break;
         if (buf[len] == 'R') break;
         len += 1;
@@ -60,17 +60,17 @@ pub fn getDims() struct { cols: u16, rows: u16, cell_w: u16, cell_h: u16 } {
     };
 }
 
-pub fn reserveVerticalSpace(rows: u16) !void {
+pub fn reserveVerticalSpace(io: Io, rows: u16) !void {
     const MOVE_CURSOR_UP_TEMPLATE = "\x1b[{d}A";
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
 
     for (0..rows) |_| {
-        try stdout.writeAll("\n");
+        try stdout.writeStreamingAll(io, "\n");
     }
 
     var move_cursor_buf: [16]u8 = undefined;
     const move_cursor_up = try fmt.bufPrint(&move_cursor_buf, MOVE_CURSOR_UP_TEMPLATE, .{rows});
 
-    try stdout.writeAll(move_cursor_up);
+    try stdout.writeStreamingAll(io, move_cursor_up);
 }
 

@@ -18,10 +18,13 @@ pub fn main() !void {
     // set this to your desired image path
     const IMAGE_PATH = "examples/assets/kitty.jpg";
 
-    // Allocator
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
     const allocator = debug_allocator.allocator();
+
+    var Threaded = std.Io.Threaded.init(allocator, .{});
+    defer Threaded.deinit();
+    const io = Threaded.io();
 
     // load image from disk
     std.debug.print("Loading image... ", .{});
@@ -68,8 +71,8 @@ pub fn main() !void {
     defer out_image.deinit(allocator);
 
     // reserve space on the screen for our image to avoid overwriting
-    try ftty.terminal.reserveVerticalSpace(out_image.height);
-    var cursor_pos = try ftty.terminal.getCursorPos();
+    try ftty.terminal.reserveVerticalSpace(io, out_image.height);
+    var cursor_pos = try ftty.terminal.getCursorPos(io);
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
     // run pipeline
@@ -79,13 +82,13 @@ pub fn main() !void {
     try compute_context.waitRenderPipeline(pipeline_handle);
 
     out_image.readPixels(pipeline_handle.output_surface);
-    out_image.dumpRaw();
+    try out_image.draw(io);
 
     // resize and reposition the image to overlap the other image
     const out_image_w_small = out_image_w / 2;
     const out_image_h_small = out_image_h / 2;
-    try ftty.terminal.reserveVerticalSpace(out_image_h_small -| 20);
-    cursor_pos = try ftty.terminal.getCursorPos();
+    try ftty.terminal.reserveVerticalSpace(io, out_image_h_small -| 20);
+    cursor_pos = try ftty.terminal.getCursorPos(io);
     out_image.setPos(cursor_pos.col + 50, cursor_pos.row -| 20);
     try out_image.resize(allocator, out_image_w_small, out_image_h_small);
 
@@ -120,5 +123,5 @@ pub fn main() !void {
 
     // render
     out_image.readPixels(pipeline_handle.output_surface);
-    // try out_image.dumpRaw();
+    try out_image.draw(io);
 }

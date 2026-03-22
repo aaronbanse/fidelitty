@@ -27,7 +27,8 @@ def draw_box(pen, x0, y0, x1, y1):
     pen.closePath()
 
 
-def render_glyph(pen, mask, cols, rows):
+# TODO: implement replication padding
+def render_glyph(pen, mask, cols, rows, replication_pad=False):
     """Draw a binary mask into a glyph.
 
     Args:

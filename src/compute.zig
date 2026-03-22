@@ -288,11 +288,11 @@ pub const Context = struct {
             res, handle, dispatch_x, dispatch_y, dispatch_w, dispatch_h,
         );
 
-        try self._device.resetFences(1, &.{res.pipeline_complete});
+        try self._device.resetFences(&.{res.pipeline_complete});
 
         try self._device.queueSubmit(
             self._queue,
-            1, &[_]vk.SubmitInfo{.{
+            &[_]vk.SubmitInfo{.{
                 .command_buffer_count = 1,
                 .p_command_buffers = @ptrCast(&res.cmd_buf),
                 .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
@@ -304,7 +304,7 @@ pub const Context = struct {
     pub fn waitRenderPipeline(self: @This(), handle: PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
         const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
-        _ = try self._device.waitForFences(1, @ptrCast(&res.pipeline_complete), .true, timeout);
+        _ = try self._device.waitForFences(&.{res.pipeline_complete}, .true, timeout);
     }
 
     pub fn resizeRenderPipeline(
@@ -332,14 +332,14 @@ pub const Context = struct {
         self.destroyMemBuffer(res.output_buf);
 
         // Destroy old command buffer and fence
-        self._device.freeCommandBuffers(self._cmd_pool, 1, @ptrCast(&res.cmd_buf));
+        self._device.freeCommandBuffers(self._cmd_pool, &.{res.cmd_buf});
         self._device.destroyFence(res.pipeline_complete, null);
 
         // Allocate new buffers
         try self.createPipelineBuffers(res, new_input_size, new_output_size);
 
         // Update descriptor sets to point to new buffers
-        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 0,
@@ -368,7 +368,7 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, null);
+        }, &.{});
 
         // Remap CPU buffers to handle
         try self.mapCpuBuffersToHandle(res, &handle.input_surface, &handle.output_surface);
@@ -430,15 +430,24 @@ pub const Context = struct {
         self._physical_device = devices[compute_indices.dev_index];
         self._mem_props = self._instance.getPhysicalDeviceMemoryProperties(self._physical_device);
 
-        // create device
+        // create device with features required by the Zig SPIR-V compute kernel
         const queue_priority: f32 = 1.0;
+        var vk12_features: vk.PhysicalDeviceVulkan12Features = .{
+            .shader_int_8 = .true,
+            .buffer_device_address = .true,
+        };
         const device_handle = try self._vki.createDevice(self._physical_device, &.{
+            .p_next = @ptrCast(&vk12_features),
             .queue_create_info_count = 1,
             .p_queue_create_infos = &[_]vk.DeviceQueueCreateInfo{.{
                 .queue_family_index = compute_indices.queue_fam_index,
                 .queue_count = 1,
                 .p_queue_priorities = @ptrCast(&queue_priority),
             }},
+            .p_enabled_features = &.{
+                .shader_int_64 = .true,
+                .shader_int_16 = .true,
+            },
         }, null);
         self._vkd = vk.DeviceWrapper.load(device_handle, self._vki.dispatch.vkGetDeviceProcAddr.?);
         self._device = vk.DeviceProxy.init(device_handle, &self._vkd);
@@ -565,7 +574,7 @@ pub const Context = struct {
         }, @ptrCast(&self._glyph_set_desc_set));
 
         // bind descriptors to buffers
-        self._device.updateDescriptorSets(3, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = self._glyph_set_desc_set,
                 .dst_binding = 0,
@@ -608,7 +617,7 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, &.{});
+        }, &.{});
 
         // allocate buffer
         const staging_buffer = try self.allocateMemBuffer(
@@ -648,7 +657,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_codepoint_buf.buf,
-            1, &[_]vk.BufferCopy{.{
+            &[_]vk.BufferCopy{.{
                 .src_offset = 0,
                 .dst_offset = 0,
                 .size = self._device_codepoint_buf.size,
@@ -660,7 +669,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_mask_buf.buf,
-            1, &[_]vk.BufferCopy{.{
+            &[_]vk.BufferCopy{.{
                 .src_offset = self._device_codepoint_buf.size,
                 .dst_offset = 0,
                 .size = self._device_mask_buf.size,
@@ -672,7 +681,7 @@ pub const Context = struct {
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_color_eqn_buf.buf,
-            1, &[_]vk.BufferCopy{.{
+            &[_]vk.BufferCopy{.{
                 .src_offset = self._device_codepoint_buf.size + self._device_mask_buf.size,
                 .dst_offset = 0,
                 .size = self._device_color_eqn_buf.size,
@@ -688,7 +697,7 @@ pub const Context = struct {
         // submit command
         try self._device.queueSubmit(
             self._queue,
-            1, &[_]vk.SubmitInfo{.{
+            &[_]vk.SubmitInfo{.{
                 .command_buffer_count = 1,
                 .p_command_buffers = @ptrCast(&self._glyph_set_upload_cmd_buf),
             }},
@@ -697,7 +706,7 @@ pub const Context = struct {
 
         // cost for waiting is minimal, simplifies logic later on with semaphores
         const timeout: u64 = 1_000_000_000; // 1 second
-        _ = try self._device.waitForFences(1, &.{fence}, .true, timeout);
+        _ = try self._device.waitForFences(&.{fence}, .true, timeout);
     }
 
     // Create and allocate a buffer and associated memory
@@ -817,7 +826,7 @@ pub const Context = struct {
         }, @ptrCast(&res.buf_io_desc_set));
 
         // bind I/O buffers to descriptor set
-        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 0,
@@ -846,7 +855,7 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, null);
+        }, &.{});
     }
 
     // extern to conform to C ABI layout, must match GLSL push constant block (std430)
@@ -887,7 +896,7 @@ pub const Context = struct {
         try self._device.beginCommandBuffer(res.cmd_buf, &.{});
 
         // copy CPU to GPU
-        self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf.buf, res.device_input_buf.buf, 1, &[_]vk.BufferCopy{
+        self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf.buf, res.device_input_buf.buf, &[_]vk.BufferCopy{
             .{ .src_offset = 0, .dst_offset = 0, .size = res.input_buf.size }
         });
 
@@ -897,8 +906,8 @@ pub const Context = struct {
             .{ .transfer_bit = true },
             .{ .compute_shader_bit = true },
             .{},
-            0, null,
-            1, &.{.{
+            null,
+            &.{.{
                 .src_access_mask = .{ .transfer_write_bit = true },
                 .dst_access_mask = .{ .shader_read_bit = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
@@ -907,7 +916,7 @@ pub const Context = struct {
                 .offset = 0,
                 .size = vk.WHOLE_SIZE,
             }},
-            0, null
+            null
         );
 
         self._device.cmdBindPipeline(res.cmd_buf, .compute, res.compute_pipeline);
@@ -942,8 +951,8 @@ pub const Context = struct {
             res.cmd_buf,
             .compute,
             self._pipeline_layout,
-            0, 2, &.{ self._glyph_set_desc_set, res.buf_io_desc_set },
-            0, null
+            0, &.{ self._glyph_set_desc_set, res.buf_io_desc_set },
+            null
         );
 
         // Dispatch compute- local_size_x = 64 in glsl
@@ -957,8 +966,8 @@ pub const Context = struct {
             .{ .compute_shader_bit = true },
             .{ .transfer_bit = true },
             .{},
-            0, null,
-            1, &.{.{
+            null,
+            &.{.{
                 .src_access_mask = .{ .shader_write_bit = true },
                 .dst_access_mask = .{ .transfer_read_bit = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
@@ -967,11 +976,11 @@ pub const Context = struct {
                 .offset = 0,
                 .size = vk.WHOLE_SIZE,
             }},
-            0, null
+            null
         );
 
         // readback gpu - cpu
-        self._device.cmdCopyBuffer(res.cmd_buf, res.device_output_buf.buf, res.output_buf.buf, 1, &[_]vk.BufferCopy{
+        self._device.cmdCopyBuffer(res.cmd_buf, res.device_output_buf.buf, res.output_buf.buf, &[_]vk.BufferCopy{
             .{ .src_offset = 0, .dst_offset = 0, .size = res.output_buf.size }
         });
 
@@ -980,15 +989,16 @@ pub const Context = struct {
 
     fn createComputePipeline(self: *@This(), res: *PipelineResources) !void {
         // create shader module
-        const shader_code = @embedFile("shaders/bin/compute_pixel.spv");
+        const shader_code = @embedFile("compute_pixel_spv");
         const shader_module = try self._device.createShaderModule(&.{
             .code_size = shader_code.len,
             .p_code = @ptrCast(@alignCast(shader_code.ptr)),
         }, null);
 
+        var pipelines: [1]vk.Pipeline = undefined;
         _ = try self._device.createComputePipelines(
             .null_handle,  // pipeline cache TODO: make caching optional, save to ~/.cache
-            1, &[_]vk.ComputePipelineCreateInfo{.{
+            &[_]vk.ComputePipelineCreateInfo{.{
                 .stage = .{
                     .stage = .{ .compute_bit = true },
                     .module = shader_module,
@@ -998,8 +1008,9 @@ pub const Context = struct {
                 .base_pipeline_index = 0
             }},
             null,
-            @ptrCast(&res.compute_pipeline),
+            &pipelines,
         );
+        res.compute_pipeline = pipelines[0];
     }
 
     fn mapCpuBuffersToHandle(
@@ -1049,4 +1060,3 @@ extern "vulkan" fn vkGetInstanceProcAddr(
     instance: vk.Instance,
     p_name: [*:0]const u8,
 ) vk.PfnVoidFunction;
-

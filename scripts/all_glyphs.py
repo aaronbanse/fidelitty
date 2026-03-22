@@ -10,10 +10,10 @@ def main():
     parser.add_argument("--out", default="fidelitty.ttf", help="Output TTF path")
     args = parser.parse_args()
 
-    cols, rows = 3, 4
+    cols, rows = 4, 4
     n_cells = cols * rows
     glyphs = []
-    for i in range(2 ** n_cells):  # skip all-blank and all-filled to fit uint16 limit
+    for i in range(1, 2 ** n_cells - 1):  # skip all-blank and all-filled to fit uint16 limit
         mask = [float((i >> bit) & 1) for bit in range(n_cells)]
         glyphs.append(mask)
 

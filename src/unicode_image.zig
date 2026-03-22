@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const fmt = std.fmt;
 const unicode = std.unicode;
+const Io = std.Io;
 
 // escape sequence to set the background color and foreground color for future printed characters,
 // plus four null bytes of space reserved for a single unicode character.
@@ -83,8 +84,9 @@ pub const UnicodeImage = struct {
         }
     }
 
-    pub fn draw(self: @This()) !void {
-        _ = try std.posix.write(1, self.buf);
+    pub fn draw(self: @This(), io: Io) !void {
+        const stdout = std.Io.File.stdout();
+        _ = try stdout.writeStreamingAll(io, self.buf);
     }
 
     /// Dump raw pixel data from the internal buffer to stderr for debugging.
@@ -107,8 +109,9 @@ pub const UnicodeImage = struct {
         }
     }
 
-    pub fn drawRegion(self: @This(), rx: u16, ry: u16, rw: u16, rh: u16) !void {
-        _ = try std.posix.write(1, BEGIN_SYNC_SEQ);
+    pub fn drawRegion(self: @This(), io: Io, rx: u16, ry: u16, rw: u16, rh: u16) !void {
+        const stdout = std.Io.File.stdout();
+        _ = try stdout.writeStreamingAll(io, BEGIN_SYNC_SEQ);
         var cursor_buf: [SET_CURSOR_SEQ_TEMPLATE.len]u8 = undefined;
         @memcpy(&cursor_buf, SET_CURSOR_SEQ_TEMPLATE);
         for (0..rh) |i| {
@@ -116,14 +119,14 @@ pub const UnicodeImage = struct {
             // write cursor position for this row
             _ = std.fmt.printInt(cursor_buf[2..], self.y + y + 1, 10, .lower, .{ .fill = 48, .width = 3 });
             _ = std.fmt.printInt(cursor_buf[6..], self.x + rx + 1, 10, .lower, .{ .fill = 48, .width = 3 });
-            _ = try std.posix.write(1, &cursor_buf);
+            _ = try stdout.writeStreamingAll(io, &cursor_buf);
             // write pixel data for columns [rx, rx+rw)
             const row_start = BEGIN_SYNC_SEQ.len + @as(usize, y) * getRowSize(self.width);
             const pixels_start = row_start + SET_CURSOR_SEQ_TEMPLATE.len + @as(usize, rx) * PIXEL_STR_TEMPLATE.len;
             const pixels_end = pixels_start + @as(usize, rw) * PIXEL_STR_TEMPLATE.len;
-            _ = try std.posix.write(1, self.buf[pixels_start..pixels_end]);
+            _ = try stdout.writeStreamingAll(io, self.buf[pixels_start..pixels_end]);
         }
-        _ = try std.posix.write(1, END_SYNC_SEQ);
+        _ = try stdout.writeStreamingAll(io, END_SYNC_SEQ);
     }
 
     fn writePixel(self: @This(), data: UnicodePixelData, x: u16, y: u16) void {

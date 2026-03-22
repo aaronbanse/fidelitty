@@ -7,16 +7,18 @@ pub fn build(b: *std.Build) void {
     // ==========================
 
     // Define set of unicode characters used to compose images
-    // This set consist of characters in the range [0x2500, 0x25ff] and [0x2800, 0x28ff]
-    const CHARACTER_SET_SIZE: u32 = 4096;
+    const CHARACTER_SET_SIZE: u32 = 65534;
 
-    var codepoints: [CHARACTER_SET_SIZE]u32 = undefined;
-    for (0..CHARACTER_SET_SIZE) |n| {
-        codepoints[n] = 0xF5000 + @as(u32, @intCast(n));
-    }
+    const codepoints = blk: {
+        var codepoints: [CHARACTER_SET_SIZE]u32 = undefined;
+        for (0..CHARACTER_SET_SIZE) |n| {
+            codepoints[n] = 0xF5000 + @as(u32, @intCast(n));
+        }
+        break :blk codepoints;
+    };
 
     // Compression constants - how many virtual pixels does a unicode character represent
-    const PATCH_WIDTH = 3;
+    const PATCH_WIDTH = 4;
     const PATCH_HEIGHT = 4;
 
     // Raw byte file containing all unicode codepoints. Embedded in gen-dataset executable.
@@ -29,7 +31,7 @@ pub fn build(b: *std.Build) void {
     const DATASET_FILE_IDENTIFIER = "glyph-dataset";
 
     // Font path from root ~/.local/share/fonts
-    const FONT_PATH = "fidelitty/fidelitty_3x4.ttf";
+    const FONT_PATH = "fidelitty/fidelitty.ttf";
 
 
     // BUILT-IN - modify at your own risk
@@ -60,13 +62,13 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/gen_dataset.zig"),
             .target = b.graph.host,
+            .link_libc = true,
         }),
     });
     gen_dataset.root_module.addOptions("dataset_config", dataset_config);
     gen_dataset.root_module.addOptions("gen_config", gen_config);
-    gen_dataset.addIncludePath(b.path("src/external"));
-    gen_dataset.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
-    gen_dataset.linkLibC();
+    gen_dataset.root_module.addIncludePath(b.path("src/external"));
+    gen_dataset.root_module.addCSourceFile(.{.file=b.path("src/external/stb_truetype_impl.c")});
 
     // Define step to generate dataset
     const run_gen = b.addRunArtifact(gen_dataset);
@@ -82,7 +84,10 @@ pub fn build(b: *std.Build) void {
 
     // ============= root module ==============
 
-    const build_mode = b.option(enum { module, shared_lib }, "build-mode", "Build as Zig module or shared library") orelse .module;
+    const build_mode = b.option(
+        enum { module, shared_lib },
+        "build-mode", "Build as Zig module or shared library"
+    ) orelse .module;
 
     // Create library
     const root_module = b.createModule(.{
@@ -107,17 +112,27 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path(DATASET_PATH)
     });
 
-    // Compile shader
-    const shader_cmd = b.addSystemCommand(&.{
-        "glslc",
-        "-fshader-stage=compute",
-        "--target-env=vulkan1.4",
-        "-o",
+    // Compile compute shader
+    const spirv_target = b.resolveTargetQuery(.{
+        .cpu_arch = .spirv64,
+        .cpu_model = .{ .explicit = &std.Target.spirv.cpu.vulkan_v1_2 },
+        .os_tag = .vulkan,
+        .ofmt = .spirv,
     });
-    const shader_spv = shader_cmd.addOutputFileArg("shaders/bin/compute_pixel.spv");
-    shader_cmd.addFileArg(b.path("shaders/compute_pixel.glsl"));
-    root_module.addAnonymousImport("shaders/bin/compute_pixel.spv", .{
-        .root_source_file = shader_spv
+    const kernel_module = b.createModule(.{
+        .root_source_file = b.path("src/kernel.zig"),
+        .target = spirv_target,
+        .optimize = .ReleaseFast, // no debug info in shaders, always use release
+    });
+    kernel_module.addOptions("dataset_config", dataset_config);
+    const kernel = b.addObject(.{
+        .name = "compute_pixel",
+        .root_module = kernel_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    root_module.addAnonymousImport("compute_pixel_spv", .{
+        .root_source_file = kernel.getEmittedBin(),
     });
 
     // Compile stb_truetype
@@ -133,7 +148,7 @@ pub fn build(b: *std.Build) void {
 
     // If we're compiling to .so, link vulkan and install
     if (lib_artifact_opt) |lib_artifact| {
-        lib_artifact.linkSystemLibrary("vulkan");
+        lib_artifact.root_module.linkSystemLibrary("vulkan", .{});
         b.installArtifact(lib_artifact);
         b.installFile("include/fidelitty.h", "include/fidelitty.h");
     }
@@ -154,7 +169,7 @@ pub fn build(b: *std.Build) void {
                     .imports = &.{ .{ .name = "fidelitty", .module = root_module} },
                 })
             });
-            exe.linkSystemLibrary("vulkan");
+            exe.root_module.linkSystemLibrary("vulkan", .{});
             break :blk exe;
         },
         .c => blk: {
@@ -163,7 +178,7 @@ pub fn build(b: *std.Build) void {
                 .root_module = root_module,
                 .linkage = .static,
             });
-            fidelitty_lib.linkSystemLibrary("vulkan");
+            fidelitty_lib.root_module.linkSystemLibrary("vulkan", .{});
 
             const exe = b.addExecutable(.{
                 .name = "img-example",
@@ -173,17 +188,17 @@ pub fn build(b: *std.Build) void {
                     .link_libc = true,
                 })
             });
-            exe.addCSourceFile(.{.file = b.path("examples/render_image.c")});
-            exe.addIncludePath(b.path("include/"));
-            exe.linkLibrary(fidelitty_lib);
-            exe.linkSystemLibrary("vulkan");
+            exe.root_module.addCSourceFile(.{.file = b.path("examples/render_image.c")});
+            exe.root_module.addIncludePath(b.path("include/"));
+            exe.root_module.linkLibrary(fidelitty_lib);
+            exe.root_module.linkSystemLibrary("vulkan", .{});
             break :blk exe;
         },
     };
 
     // Compile stb_image
-    img_exe.addIncludePath(b.path("examples/"));
-    img_exe.addCSourceFile(.{.file=b.path("examples/stb_image_impl.c")});
+    img_exe.root_module.addIncludePath(b.path("examples/"));
+    img_exe.root_module.addCSourceFile(.{.file=b.path("examples/stb_image_impl.c")});
 
     // Install binary to zig-out
     b.installArtifact(img_exe);
