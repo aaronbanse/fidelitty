@@ -12,8 +12,8 @@ const c = @cImport({
 
 pub fn main() !void {
     // Config constants
-    const patch_w = ftty.dataset_config.patch_width;
-    const patch_h = ftty.dataset_config.patch_height;
+    const patch_w = ftty.dataset_config.cell_virtual_w;
+    const patch_h = ftty.dataset_config.cell_virtual_h;
 
     // set this to your desired image path
     const IMAGE_PATH = "examples/assets/kitty.jpg";
@@ -123,5 +123,5 @@ pub fn main() !void {
 
     // render
     out_image.readPixels(pipeline_handle.output_surface);
-    try out_image.draw(io);
+    // try out_image.draw(io);
 }

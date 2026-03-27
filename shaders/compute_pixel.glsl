@@ -77,9 +77,12 @@ float dot16(const vec4[4] a, const vec4[4] b) {
 }
 
 vec2 solveChannel(const uint mask_idx, const ColorEquation eqn, const vec4[4] p_channel) {
-  float back_color_num = dot16(masks[mask_idx].neg, p_channel) * eqn.pospos - dot16(masks[mask_idx].pos, p_channel) * eqn.negpos;
-  float fore_color_num = dot16(masks[mask_idx].pos, p_channel) * eqn.negneg - dot16(masks[mask_idx].neg, p_channel) * eqn.negpos;
-  return vec2(clamp(back_color_num / eqn.determinant, 0.0, 255.0), clamp(fore_color_num / eqn.determinant, 0.0, 255.0));
+  float mn_dot_p = dot16(masks[mask_idx].neg, p_channel);
+  float mp_dot_p = dot16(masks[mask_idx].pos, p_channel);
+  float back_color_num = mn_dot_p * eqn.pospos - mp_dot_p * eqn.negpos;
+  float fore_color_num = mp_dot_p * eqn.negneg - mn_dot_p * eqn.negpos;
+  return vec2(clamp(back_color_num / eqn.determinant, 0.0, 255.0),
+              clamp(fore_color_num / eqn.determinant, 0.0, 255.0));
 }
 
 // We dispatch one invocation for each output pixel.

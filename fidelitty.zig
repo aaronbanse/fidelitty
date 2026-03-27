@@ -1,13 +1,10 @@
 //! A library for high performance rendering in the terminal using unicode characters and escape sequences.
-//! Allows for easy one-time renders or persistent graphics pipelines.
 
 // Imports
 const unicode_ = @import("src/unicode_image.zig");
 const terminal_ = @import("src/terminal_util.zig");
 const compute_ = @import("src/compute.zig");
 const dataset_config_ = @import("dataset_config");
-// You may notice the absence of glyph.zig in the imports.
-// Glyph data is baked into compute.zig at compile time, so it can be configured using the build system.
 
 
 // ================== ZIG API ====================
@@ -148,9 +145,9 @@ export fn ftty_pipeline_get_output_surface(pipeline: *PipelineHandle) callconv(.
 // DATASET CONFIG
 
 export fn ftty_get_patch_width() callconv(.c) u8 {
-    return dataset_config.patch_width;
+    return dataset_config.cell_virtual_w;
 }
 
 export fn ftty_get_patch_height() callconv(.c) u8 {
-    return dataset_config.patch_height;
+    return dataset_config.cell_virtual_h;
 }
