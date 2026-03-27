@@ -1,26 +1,70 @@
 const std = @import("std");
 const gpu = std.gpu;
 
-const dataset_config = @import("dataset_config");
-const patch_w = dataset_config.patch_width;
-const patch_h = dataset_config.patch_height;
-const patch_size = patch_w * patch_h;
-
 const glyph = @import("glyph.zig");
 const uni_im = @import("unicode_image.zig");
+
+const dataset_config = @import("dataset_config");
+const cell_w = dataset_config.cell_virtual_w;
+const cell_h = dataset_config.cell_virtual_h;
+const cell_size = cell_w * cell_h;
+
+const gpu_buf_limits = @import("gpu_buf_limits");
+
+const num_codepoints = glyph.UnicodeGlyphDataset(cell_w, cell_h).numCodepoints();
 
 // TODO: switch to [patch_h]@Vector(patch_w, f32) for our patch / glyphs.
 // zig backend won't auto-vectorize loops, and it won't unroll large vectors.
 // So, we're stuck for now with NxM patches with N,M <= 4
 
 // Static buffers, pushed once
-extern var codepoints: [1]u32 addrspace(.storage_buffer);
-extern var masks: [1]glyph.GlyphMask(patch_w, patch_h) addrspace(.storage_buffer);
-extern var color_equations: [1]glyph.ColorEqnParams addrspace(.storage_buffer);
+const codepoints = @extern(*addrspace(.storage_buffer) extern struct {
+    buf: [num_codepoints]u32,
+}, .{
+    .name = "codepoints",
+    .decoration = .{ .descriptor = .{
+        .binding = 0,
+        .set = 0,
+    } },
+});
+const masks = @extern(*addrspace(.storage_buffer) extern struct {
+    buf: [num_codepoints]glyph.GlyphMask(cell_w, cell_h),
+}, .{
+    .name = "masks",
+    .decoration = .{ .descriptor = .{
+        .binding = 1,
+        .set = 0,
+    } },
+});
+const color_equations = @extern(*addrspace(.storage_buffer) extern struct {
+    buf: [num_codepoints]glyph.ColorEqnCache,
+}, .{
+    .name = "color_equations",
+    .decoration = .{ .descriptor = .{
+        .binding = 2,
+        .set = 0,
+    } },
+});
 
 // I/O
-extern var input_image: [1]u8 addrspace(.storage_buffer);
-extern var output_image: [1]uni_im.UnicodePixelData addrspace(.storage_buffer);
+const input_image = @extern(*addrspace(.storage_buffer) extern struct {
+    buf: [gpu_buf_limits.image * cell_size * 4]u8,
+}, .{
+    .name = "input_image",
+    .decoration = .{ .descriptor = .{
+        .binding = 0,
+        .set = 1,
+    } },
+});
+const output_image = @extern(*addrspace(.storage_buffer) extern struct {
+    buf: [gpu_buf_limits.image]uni_im.UnicodePixelData,
+}, .{
+    .name = "output_image",
+    .decoration = .{ .descriptor = .{
+        .binding = 1,
+        .set = 1,
+    } },
+});
 
 // Per-dispatch constants
 const PushConstants = extern struct {
@@ -51,14 +95,14 @@ const CellColoring = struct {
 // Solver equation explained in-detail in README.md
 fn solveChannel(
     mask_idx: usize,
-    eqn: glyph.ColorEqnParams,
-    patch_channel: [patch_size]f32,
+    eqn: glyph.ColorEqnCache,
+    patch_channel: [cell_size]f32,
 ) CellColoring {
     var mask_neg_dot: f32 = 0;
     var mask_pos_dot: f32 = 0;
-    for (0..patch_size) |i| {
-        mask_neg_dot += masks[mask_idx].neg[i] * patch_channel[i];
-        mask_pos_dot += masks[mask_idx].pos[i] * patch_channel[i];
+    for (0..cell_size) |i| {
+        mask_neg_dot += masks.buf[mask_idx].neg[i] * patch_channel[i];
+        mask_pos_dot += masks.buf[mask_idx].pos[i] * patch_channel[i];
     }
 
     const back_numerator = mask_neg_dot * eqn.FF - mask_pos_dot * eqn.BF;
@@ -71,6 +115,8 @@ fn solveChannel(
 }
 
 export fn main() callconv(.spirv_kernel) void {
+    // gpu.executionMode(main, .{ .local_size = .{ .x = 64, .y = 1, .z = 1 } });
+
     const local_idx = gpu.global_invocation_id[0];
 
     const out_x = (local_idx % pc.dispatch_w) + pc.dispatch_x;
@@ -82,15 +128,15 @@ export fn main() callconv(.spirv_kernel) void {
     const in_im_w = pc.out_im_w * pc.input_cell_w;
 
     // Pull patch data from image
-    var patch_rgb: [3][patch_size]f32 = undefined;
+    var patch_rgb: [3][cell_size]f32 = undefined;
     for (0..pc.patch_h) |row| {
         const row_base = (in_y + row) * in_im_w + in_x;
         for (0..pc.patch_w) |col| {
             const src_col = col * pc.input_cell_w / pc.patch_w;
             const byte_off = (row_base + src_col) * pc.input_bpp;
             for (0..3) |chan| {
-                patch_rgb[chan][row * patch_w + col] =
-                    @floatFromInt(input_image[byte_off + pc.swizzle[chan]]);
+                patch_rgb[chan][row * cell_w + col] =
+                    @floatFromInt(input_image.buf[byte_off + pc.swizzle[chan]]);
             }
         }
     }
@@ -101,16 +147,16 @@ export fn main() callconv(.spirv_kernel) void {
     var rgb_solved: [3]CellColoring = undefined;
     for (0..pc.num_codepoints) |i| {
         for (0..3) |chan| {
-            rgb_solved[chan] = solveChannel(i, color_equations[i], patch_rgb[chan]);
+            rgb_solved[chan] = solveChannel(i, color_equations.buf[i], patch_rgb[chan]);
         }
 
         var diff: f32 = 0;
         for (0..3) |chan| {
             for (0..pc.patch_h) |row| {
                 for (0..pc.patch_w) |col| {
-                    const idx = row * patch_w + col;
-                    const back_component = rgb_solved[chan].back * masks[i].neg[idx];
-                    const fore_component = rgb_solved[chan].fore * masks[i].pos[idx];
+                    const idx = row * cell_w + col;
+                    const back_component = rgb_solved[chan].back * masks.buf[i].neg[idx];
+                    const fore_component = rgb_solved[chan].fore * masks.buf[i].pos[idx];
                     const pixel_disparity = back_component + fore_component - patch_rgb[chan][idx];
                     diff += pixel_disparity * pixel_disparity;
                 }
@@ -125,9 +171,9 @@ export fn main() callconv(.spirv_kernel) void {
     // Conditionally copying a [3]CellColoring into a 'best rgb solved' is a full branch, versus
     // conditionally storing a usize into 'best_i', which reduces to a conditional move instruction.
     for (0..3) |chan| {
-        rgb_solved[chan] = solveChannel(best_i, color_equations[best_i], patch_rgb[chan]);
+        rgb_solved[chan] = solveChannel(best_i, color_equations.buf[best_i], patch_rgb[chan]);
     }
-    output_image[out_idx] = .{
+    output_image.buf[out_idx] = .{
         .br = @intFromFloat(rgb_solved[0].back),
         .bg = @intFromFloat(rgb_solved[1].back),
         .bb = @intFromFloat(rgb_solved[2].back),
@@ -135,6 +181,6 @@ export fn main() callconv(.spirv_kernel) void {
         .fg = @intFromFloat(rgb_solved[1].fore),
         .fb = @intFromFloat(rgb_solved[2].fore),
         ._pad = 0,
-        .codepoint = codepoints[best_i],
+        .codepoint = codepoints.buf[best_i],
     };
 }
