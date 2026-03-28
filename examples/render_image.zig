@@ -37,7 +37,8 @@ pub fn main() !void {
     std.debug.print("Finished.\n", .{});
 
     // initialize compute context
-    var compute_context: ftty.ComputeContext = try .init(allocator, 8);
+    var compute_context: ftty.ComputeContext = undefined;
+    try compute_context.init(allocator, 8);
     defer compute_context.deinit();
 
     // create a render pipeline

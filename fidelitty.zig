@@ -51,7 +51,7 @@ const c_allocator = @import("std").heap.c_allocator;
 
 export fn ftty_context_create(max_pipelines: u8) callconv(.c) ?*ComputeContext {
     const ctx = c_allocator.create(ComputeContext) catch return null;
-    ctx.* = ComputeContext.init(c_allocator, max_pipelines) catch {
+    ctx.init(c_allocator, max_pipelines) catch {
         c_allocator.destroy(ctx);
         return null;
     };

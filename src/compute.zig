@@ -93,8 +93,8 @@ pub const Context = struct {
     _device_color_eqn_buf: MemBuffer,
     _num_codepoints: u32,
 
-    _patch_w: u8,
-    _patch_h: u8,
+    _cell_w: u8,
+    _cell_h: u8,
 
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
 
@@ -111,20 +111,18 @@ pub const Context = struct {
     _desc_pool: vk.DescriptorPool,
 
     /// Initialize a standalone vulkan context and setup machinery
-    pub fn init(allocator: mem.Allocator, max_pipelines: u8) !@This() {
-        var ctx: @This() = undefined;
-
-        ctx._pipelines = .init(allocator);
-        ctx._max_pipelines = max_pipelines;
-        ctx._patch_w = dataset_config.cell_virtual_w;
-        ctx._patch_h = dataset_config.cell_virtual_h;
-        ctx.loadBase();
-        try ctx.createInstance();
-        const compute_device_indices = try ctx.createDevice();
-        ctx.createQueue(compute_device_indices.queue_fam_index);
-        try ctx.createCommandPool(compute_device_indices.queue_fam_index);
-        try ctx.createDescriptorPool(max_pipelines);
-        try ctx.createLayouts();
+    pub fn init(self: *@This(), allocator: mem.Allocator, max_pipelines: u8) !void {
+        self._pipelines = .init(allocator);
+        self._max_pipelines = max_pipelines;
+        self._cell_w = dataset_config.cell_virtual_w;
+        self._cell_h = dataset_config.cell_virtual_h;
+        self.loadBase();
+        try self.createInstance();
+        const compute_device_indices = try self.createDevice();
+        self.createQueue(compute_device_indices.queue_fam_index);
+        try self.createCommandPool(compute_device_indices.queue_fam_index);
+        try self.createDescriptorPool(max_pipelines);
+        try self.createLayouts();
 
         // load glyph dataset to gpu
         const Dataset = glyph.UnicodeGlyphDataset(
@@ -133,13 +131,11 @@ pub const Context = struct {
         );
         var dataset: Dataset = .init();
 
-        try ctx.createGlyphSet(
+        try self.createGlyphSet(
             dataset_config.cell_virtual_w,
             dataset_config.cell_virtual_h,
             &dataset,
         );
-
-        return ctx;
     }
 
     pub fn deinit(self: *@This()) void {
@@ -176,7 +172,7 @@ pub const Context = struct {
         im_w: u16,
         im_h: u16,
     ) !PipelineHandle {
-        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._patch_w, self._patch_h);
+        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._cell_w, self._cell_h);
     }
 
     pub fn createRenderPipelineEx(
@@ -842,8 +838,8 @@ pub const Context = struct {
             .swizzle = handle.pixel_format.swizzle(),
             .input_cell_w = handle.src_cell_w,
             .input_cell_h = handle.src_cell_h,
-            .patch_w = self._patch_w,
-            .patch_h = self._patch_h,
+            .patch_w = self._cell_w,
+            .patch_h = self._cell_h,
         };
 
         self._device.cmdPushConstants(
