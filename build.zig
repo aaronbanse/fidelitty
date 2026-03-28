@@ -71,8 +71,14 @@ pub fn build(b: *std.Build) void {
             .root_source_file = kernel_obj.getEmittedBin(),
         });
     } else {
+        const VEC4_QUOTIENT = (CELL_VIRTUAL_W * CELL_VIRTUAL_H) / 4;
+        const VEC4_REMAINDER = (CELL_VIRTUAL_W * CELL_VIRTUAL_H) % 4;
         const shader_cmd = b.addSystemCommand(&.{
             "glslc",
+            std.fmt.comptimePrint("-DCELL_W={d}", .{CELL_VIRTUAL_W}),
+            std.fmt.comptimePrint("-DCELL_H={d}", .{CELL_VIRTUAL_H}),
+            std.fmt.comptimePrint("-DVEC4_QUOTIENT={d}", .{VEC4_QUOTIENT}),
+            std.fmt.comptimePrint("-DVEC4_REMAINDER={d}", .{VEC4_REMAINDER}),
             "-fshader-stage=compute",
             "--target-env=vulkan1.4",
             "-o",

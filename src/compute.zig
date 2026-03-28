@@ -510,7 +510,7 @@ pub const Context = struct {
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                    .buffer = self._device_codepoint_buf.buf,
+                    .buffer = self._device_mask_buf.buf,
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
@@ -524,7 +524,7 @@ pub const Context = struct {
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                    .buffer = self._device_mask_buf.buf,
+                    .buffer = self._device_codepoint_buf.buf,
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
@@ -563,12 +563,13 @@ pub const Context = struct {
             .{},
         ) orelse return error.MapMemoryFailed;
 
-        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_raw));
-        const staging_ptr_masks: [*]glyph.GlyphMask(w, h) = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints));
-        const staging_ptr_eqns: [*]glyph.ColorEqnCache = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints));
+        // NOTE: staging ptr masks is placed first, since it has very strict alignment requirements.
+        const staging_ptr_masks: [*]glyph.GlyphMask(w, h) = @ptrCast(@alignCast(staging_ptr_raw));
+        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints));
+        const staging_ptr_eqns: [*]glyph.ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints));
 
-        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], glyph_set.codepoints[0..self._num_codepoints]);
         @memcpy(staging_ptr_masks[0..self._num_codepoints], glyph_set.masks[0..self._num_codepoints]);
+        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], glyph_set.codepoints[0..self._num_codepoints]);
         @memcpy(staging_ptr_eqns[0..self._num_codepoints], glyph_set.color_eqns[0..self._num_codepoints]);
 
         try self._device.allocateCommandBuffers(&.{
@@ -582,20 +583,9 @@ pub const Context = struct {
         self._device.cmdCopyBuffer(
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
-            self._device_codepoint_buf.buf,
-            &[_]vk.BufferCopy{.{
-                .src_offset = 0,
-                .dst_offset = 0,
-                .size = self._device_codepoint_buf.size,
-            }},
-        );
-
-        self._device.cmdCopyBuffer(
-            self._glyph_set_upload_cmd_buf,
-            staging_buffer.buf,
             self._device_mask_buf.buf,
             &[_]vk.BufferCopy{.{
-                .src_offset = self._device_codepoint_buf.size,
+                .src_offset = 0,
                 .dst_offset = 0,
                 .size = self._device_mask_buf.size,
             }},
@@ -604,9 +594,20 @@ pub const Context = struct {
         self._device.cmdCopyBuffer(
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
+            self._device_codepoint_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = self._device_mask_buf.size,
+                .dst_offset = 0,
+                .size = self._device_codepoint_buf.size,
+            }},
+        );
+
+        self._device.cmdCopyBuffer(
+            self._glyph_set_upload_cmd_buf,
+            staging_buffer.buf,
             self._device_color_eqn_buf.buf,
             &[_]vk.BufferCopy{.{
-                .src_offset = self._device_codepoint_buf.size + self._device_mask_buf.size,
+                .src_offset = self._device_mask_buf.size + self._device_codepoint_buf.size,
                 .dst_offset = 0,
                 .size = self._device_color_eqn_buf.size,
             }},

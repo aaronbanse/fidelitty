@@ -13,9 +13,10 @@ const c = @cImport({
 
 /// Data structure storing a vector mask of vals in [0,1] of the positive and negative space of a glyph.
 pub fn GlyphMask(comptime w: u8, comptime h: u8) type {
+    const GPU_VEC4_ALIGN = 16;
     return extern struct {
-        neg: [w*h]f32,
-        pos: [w*h]f32,
+        neg: [w*h]f32 align(GPU_VEC4_ALIGN),
+        pos: [w*h]f32 align(GPU_VEC4_ALIGN),
     };
 }
 
