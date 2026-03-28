@@ -1,21 +1,16 @@
 .{
     .name = .fidelitty,
     .version = "0.1.0",
-    .paths = .{
-        "fidelitty",
-        "src",
-        "src/external",
-        "shaders",
-        "build.zig",
-        "build.zig.zon",
-        "vk.xml"
-    },
+    .paths = .{ "fidelitty", "src", "src/external", "shaders", "build.zig", "build.zig.zon", "vk.xml" },
     .dependencies = .{
         .vulkan_zig = .{
             .url = "https://github.com/Snektron/vulkan-zig/archive/b3086a867a47bb10e66a987a38115a43056b60f7.tar.gz",
             .hash = "vulkan-0.0.0-r7Ytx99oAwDmJu0XtvukW_bSYnAv1PpbPO9ZFwsjcPPO",
         },
+        .vulkan = .{
+            .url = "git+https://github.com/Snektron/vulkan-zig#b3086a867a47bb10e66a987a38115a43056b60f7",
+            .hash = "vulkan-0.0.0-r7Ytx99oAwDmJu0XtvukW_bSYnAv1PpbPO9ZFwsjcPPO",
+        },
     },
     .fingerprint = 0xa8a362c466afc26,
 }
-
