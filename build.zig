@@ -3,23 +3,28 @@ const math = std.math;
 const fs = std.fs;
 
 pub fn build(b: *std.Build) void {
-    const CHARACTER_SET_START: u32 = 0xF5000;
+    const CODEPOINT_START: u32 = 0xF5000;
 
-    const CELL_VIRTUAL_W = 4;
-    const CELL_VIRTUAL_H = 4;
+    const CELL_COLS = 4;
+    const CELL_ROWS = 4;
 
-    const FONT_PATH = "~/.local/share/fonts/fidelitty/fidelitty.ttf";
+    const FONT_DIR = "~/.local/share/fonts/fidelitty";
+    const FONT_NAME = "fidelitty.ttf";
+    const CACHE_NAME = ".ftty-cache";
 
-    const USE_ZIG_SHADER = false;
-
-    const dataset_config = b.addOptions();
-    dataset_config.addOption(u8, "cell_virtual_w", CELL_VIRTUAL_W);
-    dataset_config.addOption(u8, "cell_virtual_h", CELL_VIRTUAL_H);
-    dataset_config.addOption(u32, "charset_start", CHARACTER_SET_START);
-    dataset_config.addOption([]const u8, "font_path", FONT_PATH);
+    const config = b.addOptions();
+    config.addOption(u8, "cell_cols", CELL_COLS);
+    config.addOption(u8, "cell_rows", CELL_ROWS);
+    config.addOption(u32, "codepoint_start", CODEPOINT_START);
+    config.addOption([]const u8, "font_dir", FONT_DIR);
+    config.addOption([]const u8, "font_name", FONT_NAME);
+    config.addOption([]const u8, "cache_name", CACHE_NAME);
 
     const optimize = b.standardOptimizeOption(.{});
     const target = b.standardTargetOptions(.{});
+
+    // Zig spirv backend is still maturing
+    const USE_ZIG_SHADER = false;
 
 
     // ============= root module ==============
@@ -43,8 +48,10 @@ pub fn build(b: *std.Build) void {
         .version = .{ .major = 0, .minor = 1, .patch = 0 },
     }) else null;
 
-    root_module.addOptions("dataset_config", dataset_config);
+    root_module.addOptions("config", config);
 
+    root_module.addIncludePath(b.path("src/ext"));
+    root_module.addCSourceFile(.{ .file =  b.path("src/ext/stb_truetype_impl.c") });
 
     if (USE_ZIG_SHADER) {
         const gpu_buf_limits = b.addOptions();
@@ -59,7 +66,7 @@ pub fn build(b: *std.Build) void {
             }),
             .optimize = optimize,
         });
-        kernel_module.addOptions("dataset_config", dataset_config);
+        kernel_module.addOptions("config", config);
         kernel_module.addOptions("gpu_buf_limits", gpu_buf_limits);
 
         const kernel_obj = b.addObject(.{
@@ -71,19 +78,21 @@ pub fn build(b: *std.Build) void {
             .root_source_file = kernel_obj.getEmittedBin(),
         });
     } else {
-        const VEC4_QUOTIENT = (CELL_VIRTUAL_W * CELL_VIRTUAL_H) / 4;
-        const VEC4_REMAINDER = (CELL_VIRTUAL_W * CELL_VIRTUAL_H) % 4;
+        // compute_pixel.glsl uses a custom type for large vector operations.
+        // We pass in all the parameters for this type as define statements.
+        const VEC4_QUOTIENT = (CELL_COLS * CELL_ROWS) / 4;
+        const VEC4_REMAINDER = (CELL_COLS * CELL_ROWS) % 4;
         const shader_cmd = b.addSystemCommand(&.{
             "glslc",
-            std.fmt.comptimePrint("-DCELL_W={d}", .{CELL_VIRTUAL_W}),
-            std.fmt.comptimePrint("-DCELL_H={d}", .{CELL_VIRTUAL_H}),
+            std.fmt.comptimePrint("-DCELL_W={d}", .{CELL_COLS}),
+            std.fmt.comptimePrint("-DCELL_H={d}", .{CELL_ROWS}),
             std.fmt.comptimePrint("-DVEC4_QUOTIENT={d}", .{VEC4_QUOTIENT}),
             std.fmt.comptimePrint("-DVEC4_REMAINDER={d}", .{VEC4_REMAINDER}),
             "-fshader-stage=compute",
             "--target-env=vulkan1.4",
             "-o",
         });
-        const shader_spv = shader_cmd.addOutputFileArg("shaders/bin/compute_pixel.spv");
+        const shader_spv = shader_cmd.addOutputFileArg("shaders/out/compute_pixel.spv");
         shader_cmd.addFileArg(b.path("shaders/compute_pixel.glsl"));
         root_module.addAnonymousImport("compute_pixel_spv", .{
             .root_source_file = shader_spv,

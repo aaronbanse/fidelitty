@@ -4,7 +4,7 @@ const mem = std.mem;
 const vk = @import("vulkan");
 
 const gen_config = @import("gen_config");
-const dataset_config = @import("dataset_config");
+const config = @import("config");
 
 const uni_im = @import("unicode_image.zig");
 const glyph = @import("glyph.zig");
@@ -40,15 +40,15 @@ pub const PipelineHandle = struct {
 
     pixel_format: PixelFormat,
     // TODO: fix name to remove comments
-    src_cell_w: u8, // source pixels per cell horizontally
-    src_cell_h: u8, // source pixels per cell vertically
+    src_cell_cols: u8, // source pixels per cell horizontally
+    src_cell_rows: u8, // source pixels per cell vertically
 
     _id: Context.HandleID,
 
     pub fn inputDims(self: @This()) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, self.src_cell_w),
-            .h = @as(u32, self.out_im_h) * @as(u32, self.src_cell_h),
+            .w = @as(u32, self.out_im_w) * @as(u32, self.src_cell_cols),
+            .h = @as(u32, self.out_im_h) * @as(u32, self.src_cell_rows),
         };
     }
 };
@@ -93,8 +93,8 @@ pub const Context = struct {
     _device_color_eqn_buf: MemBuffer,
     _num_codepoints: u32,
 
-    _cell_w: u8,
-    _cell_h: u8,
+    _cell_cols: u8,
+    _cell_rows: u8,
 
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
 
@@ -114,8 +114,8 @@ pub const Context = struct {
     pub fn init(self: *@This(), allocator: mem.Allocator, max_pipelines: u8) !void {
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
-        self._cell_w = dataset_config.cell_virtual_w;
-        self._cell_h = dataset_config.cell_virtual_h;
+        self._cell_cols = config.cell_cols;
+        self._cell_rows = config.cell_rows;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -126,14 +126,14 @@ pub const Context = struct {
 
         // load glyph dataset to gpu
         const Dataset = glyph.UnicodeGlyphDataset(
-            dataset_config.cell_virtual_w,
-            dataset_config.cell_virtual_h,
+            config.cell_cols,
+            config.cell_rows,
         );
         var dataset: Dataset = .init();
 
         try self.createGlyphSet(
-            dataset_config.cell_virtual_w,
-            dataset_config.cell_virtual_h,
+            config.cell_cols,
+            config.cell_rows,
             &dataset,
         );
     }
@@ -162,9 +162,9 @@ pub const Context = struct {
         self._instance.destroyInstance(null);
     }
 
-    fn computeInputSize(im_w: u16, im_h: u16, pixel_format: PixelFormat, src_cell_w: u8, src_cell_h: u8) usize {
+    fn computeInputSize(im_w: u16, im_h: u16, pixel_format: PixelFormat, src_cell_cols: u8, src_cell_rows: u8) usize {
         const bpp: usize = pixel_format.bpp();
-        return bpp * @as(usize, im_w) * @as(usize, src_cell_w) * @as(usize, im_h) * @as(usize, src_cell_h);
+        return bpp * @as(usize, im_w) * @as(usize, src_cell_cols) * @as(usize, im_h) * @as(usize, src_cell_rows);
     }
 
     pub fn createRenderPipeline(
@@ -172,7 +172,7 @@ pub const Context = struct {
         im_w: u16,
         im_h: u16,
     ) !PipelineHandle {
-        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._cell_w, self._cell_h);
+        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._cell_cols, self._cell_rows);
     }
 
     pub fn createRenderPipelineEx(
@@ -180,10 +180,10 @@ pub const Context = struct {
         im_w: u16,
         im_h: u16,
         pixel_format: PixelFormat,
-        src_cell_w: u8,
-        src_cell_h: u8,
+        src_cell_cols: u8,
+        src_cell_rows: u8,
     ) !PipelineHandle {
-        const input_size = computeInputSize(im_w, im_h, pixel_format, src_cell_w, src_cell_h);
+        const input_size = computeInputSize(im_w, im_h, pixel_format, src_cell_cols, src_cell_rows);
         const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
 
         var resources: PipelineResources = undefined;
@@ -198,8 +198,8 @@ pub const Context = struct {
             .output_surface = undefined,
             ._id = undefined,
             .pixel_format = pixel_format,
-            .src_cell_w = src_cell_w,
-            .src_cell_h = src_cell_h,
+            .src_cell_cols = src_cell_cols,
+            .src_cell_rows = src_cell_rows,
         };
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
 
@@ -263,7 +263,7 @@ pub const Context = struct {
 
         try self.waitRenderPipeline(handle.*);
 
-        const new_input_size = computeInputSize(new_w, new_h, handle.pixel_format, handle.src_cell_w, handle.src_cell_h);
+        const new_input_size = computeInputSize(new_w, new_h, handle.pixel_format, handle.src_cell_cols, handle.src_cell_rows);
         const new_output_size = @as(usize, new_w) * @as(usize, new_h) * @sizeOf(uni_im.UnicodePixelData);
 
         self._device.unmapMemory(res.input_buf.mem);
@@ -764,8 +764,8 @@ pub const Context = struct {
         input_bpp: u32,
         _pad: u32,
         swizzle: [3]i32,
-        input_cell_w: u32,
-        input_cell_h: u32,
+        input_cell_cols: u32,
+        input_cell_rows: u32,
         patch_w: u32,
         patch_h: u32,
     };
@@ -836,10 +836,10 @@ pub const Context = struct {
             .input_bpp = handle.pixel_format.bpp(),
             ._pad = 0,
             .swizzle = handle.pixel_format.swizzle(),
-            .input_cell_w = handle.src_cell_w,
-            .input_cell_h = handle.src_cell_h,
-            .patch_w = self._cell_w,
-            .patch_h = self._cell_h,
+            .input_cell_cols = handle.src_cell_cols,
+            .input_cell_rows = handle.src_cell_rows,
+            .patch_w = self._cell_cols,
+            .patch_h = self._cell_rows,
         };
 
         self._device.cmdPushConstants(
