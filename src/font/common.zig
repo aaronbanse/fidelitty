@@ -11,8 +11,6 @@ pub const num_glyphs = glyph.UnicodeGlyphDataset(cell_w, cell_h).numCodepoints()
 // TODO: figure out more informed values for these, and where they should live.
 pub const MAX_CONTOURS = 36;
 pub const MAX_GLYPH_SIZE = 1024;
-// Should not live here
-pub const hmtx_size = 4 + (@as(usize, num_glyphs) - 1) * 2;
 
 pub fn Big(comptime T: type) type {
     return extern struct {

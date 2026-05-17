@@ -1,8 +1,10 @@
 //! Glyph outline geometry: turns a cell bitmask into TrueType `glyf` data.
 
+// TODO: glyf.zig / glyph.zig is confusing. The difference is that a glyf is a opentype term and a glyph is a general font term? not sure, maybe ask llm.
 const std = @import("std");
 const math = std.math;
 const common = @import("common.zig");
+const Big = common.Big;
 const writeBytes = common.writeBytes;
 const cell_w = common.cell_w;
 const cell_h = common.cell_h;
@@ -184,10 +186,11 @@ fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) u
 pub fn buildGlyf(glyf: *Glyf, loca: *Loca, ascent: i16, rect_w: i16, rect_h: i16) void {
     glyf.len = 0;
     for (0..num_glyphs) |mask| {
-        writeBytes(loca.buf[mask * 4 ..][0..4], glyf.len);
+        loca.offsets[mask] = Big(u32).from(@intCast(glyf.len));
         const size = compileGlyph(@intCast(mask), glyf.buf[glyf.len..], rect_w, rect_h, ascent);
         glyf.len += @intCast(size);
     }
-    // Sentinel loca entry TODO: what does this mean?
-    writeBytes(loca.buf[num_glyphs * 4 ..][0..4], glyf.len);
+    // Trailing sentinel: glyph i's data spans loca[i]..loca[i + 1], so a final
+    // entry is needed to give the last glyph an end offset.
+    loca.offsets[num_glyphs] = Big(u32).from(@intCast(glyf.len));
 }

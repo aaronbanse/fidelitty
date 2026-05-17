@@ -11,32 +11,31 @@ const Big = common.Big;
 const writeBytes = common.writeBytes;
 const num_glyphs = common.num_glyphs;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
-const hmtx_size = common.hmtx_size;
 const cell_w = common.cell_w;
 const cell_h = common.cell_h;
 
 const tables_mod = @import("tables.zig");
+const Os2 = tables_mod.Os2;
+const Cmap = tables_mod.Cmap;
+const Glyf = tables_mod.Glyf;
 const Head = tables_mod.Head;
 const Hhea = tables_mod.Hhea;
-const Maxp = tables_mod.Maxp;
-const Os2 = tables_mod.Os2;
-const Post = tables_mod.Post;
-const Cmap = tables_mod.Cmap;
-const Name = tables_mod.Name;
-const Glyf = tables_mod.Glyf;
+const Hmtx = tables_mod.Hmtx;
 const Loca = tables_mod.Loca;
+const Maxp = tables_mod.Maxp;
+const Name = tables_mod.Name;
+const Post = tables_mod.Post;
 const OffsetTable = tables_mod.OffsetTable;
 const TableRecord = tables_mod.TableRecord;
+const buildOs2 = tables_mod.buildOs2;
+const buildCmap = tables_mod.buildCmap;
+const buildGlyf = tables_mod.buildGlyf;
 const buildHead = tables_mod.buildHead;
 const buildHhea = tables_mod.buildHhea;
-const buildMaxp = tables_mod.buildMaxp;
-const buildOs2 = tables_mod.buildOs2;
-const buildPost = tables_mod.buildPost;
 const buildHmtx = tables_mod.buildHmtx;
-const buildCmap = tables_mod.buildCmap;
+const buildMaxp = tables_mod.buildMaxp;
 const buildName = tables_mod.buildName;
-
-const buildGlyf = @import("glyf.zig").buildGlyf;
+const buildPost = tables_mod.buildPost;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
 
 pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
@@ -46,18 +45,19 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
     const glyph_rect_w = @divExact(metrics.advance_width, cell_w);
     const glyph_rect_h = @divExact(metrics.ascent + metrics.descent, cell_h);
 
+    const os2  = buildOs2(metrics);
+    const cmap = buildCmap();
+
     var glyf: Glyf = undefined;
     var loca: Loca = undefined;
     buildGlyf(&glyf, &loca, metrics.ascent, @intCast(glyph_rect_w), @intCast(glyph_rect_h));
 
     const head = buildHead(metrics, @intCast(glyph_rect_w), @intCast(glyph_rect_h));
     const hhea = buildHhea(metrics, @intCast(glyph_rect_w));
-    const maxp = buildMaxp();
-    const os2  = buildOs2(metrics);
-    const post = buildPost();
     const hmtx = buildHmtx(metrics.advance_width);
-    const cmap = buildCmap();
+    const maxp = buildMaxp();
     const name = buildName();
+    const post = buildPost();
 
     const Table = struct {
         tag: *const [4]u8,
@@ -65,14 +65,17 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
         padded_len: u32,
     };
 
+    // The OpenType spec requires the table directory to be in tag-alphabetical
+    // order. Though not required, we adopt this ordering throught the rest of
+    // the codebase for simplicity.
     var tables = [_]Table {
         .{ .tag = "OS/2", .data = mem.asBytes(&os2),     .padded_len = undefined },
         .{ .tag = "cmap", .data = mem.asBytes(&cmap),    .padded_len = undefined },
         .{ .tag = "glyf", .data = glyf.buf[0..glyf.len], .padded_len = undefined },
         .{ .tag = "head", .data = mem.asBytes(&head),    .padded_len = undefined },
         .{ .tag = "hhea", .data = mem.asBytes(&hhea),    .padded_len = undefined },
-        .{ .tag = "hmtx", .data = &hmtx.buf,             .padded_len = undefined },
-        .{ .tag = "loca", .data = &loca.buf,             .padded_len = undefined },
+        .{ .tag = "hmtx", .data = mem.asBytes(&hmtx),    .padded_len = undefined },
+        .{ .tag = "loca", .data = mem.asBytes(&loca),    .padded_len = undefined },
         .{ .tag = "maxp", .data = mem.asBytes(&maxp),    .padded_len = undefined },
         .{ .tag = "name", .data = mem.asBytes(&name),    .padded_len = undefined },
         .{ .tag = "post", .data = mem.asBytes(&post),    .padded_len = undefined },
@@ -92,8 +95,8 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
         const ds = @sizeOf(OffsetTable) + tables.len * @sizeOf(TableRecord);
         break :blk ds + padTo4(@sizeOf(Os2)) + padTo4(@sizeOf(Cmap)) +
             padTo4(num_glyphs * MAX_GLYPH_SIZE) + padTo4(@sizeOf(Head)) +
-            padTo4(@sizeOf(Hhea)) + padTo4(hmtx_size) +
-            padTo4((num_glyphs + 1) * 4) + padTo4(@sizeOf(Maxp)) +
+            padTo4(@sizeOf(Hhea)) + padTo4(@sizeOf(Hmtx)) +
+            padTo4(@sizeOf(Loca)) + padTo4(@sizeOf(Maxp)) +
             padTo4(@sizeOf(Name)) + padTo4(@sizeOf(Post));
     };
     var out: [max_output_size]u8 = undefined;

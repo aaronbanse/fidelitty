@@ -1,77 +1,19 @@
 //! OpenType table struct definitions and their builders.
 
-const mem = @import("std").mem;
 const config = @import("config");
 const common = @import("common.zig");
 const Big = common.Big;
 const num_glyphs = common.num_glyphs;
 const MAX_CONTOURS = common.MAX_CONTOURS;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
-const hmtx_size = common.hmtx_size;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
 
 // Table structs based on OpenType specification:
 // https://learn.microsoft.com/en-us/typography/opentype/spec/
-
-pub const Head = extern struct {
-    version_major: Big(u16),
-    version_minor: Big(u16),
-    font_revision: Big(u32),
-    checksum_adjustment: Big(u32),
-    magic_number: Big(u32),
-    flags: Big(u16),
-    units_per_em: Big(u16),
-    created: Big(i64),
-    modified: Big(i64),
-    x_min: Big(i16),
-    y_min: Big(i16),
-    x_max: Big(i16),
-    y_max: Big(i16),
-    mac_style: Big(u16),
-    lowest_rec_ppem: Big(u16),
-    font_direction_hint: Big(i16),
-    index_to_loc_format: Big(i16),
-    glyph_data_format: Big(i16),
-};
-
-pub const Hhea = extern struct {
-    major_version: Big(u16),
-    minor_version: Big(u16),
-    ascender: Big(i16),
-    descender: Big(i16),
-    line_gap: Big(i16),
-    advance_width_max: Big(u16),
-    min_left_side_bearing: Big(i16),
-    min_right_side_bearing: Big(i16),
-    x_max_extent: Big(i16),
-    caret_slope_rise: Big(i16),
-    caret_slope_run: Big(i16),
-    caret_offset: Big(i16),
-    reserved1: Big(i16),
-    reserved2: Big(i16),
-    reserved3: Big(i16),
-    reserved4: Big(i16),
-    metric_data_format: Big(i16),
-    number_of_h_metrics: Big(u16),
-};
-
-pub const Maxp = extern struct {
-    version: Big(u32),
-    num_glyphs: Big(u16),
-    max_points: Big(u16),
-    max_contours: Big(u16),
-    max_composite_points: Big(u16),
-    max_composite_contours: Big(u16),
-    max_zones: Big(u16),
-    max_twilight_points: Big(u16),
-    max_storage: Big(u16),
-    max_function_defs: Big(u16),
-    max_instruction_defs: Big(u16),
-    max_stack_elements: Big(u16),
-    max_size_of_instructions: Big(u16),
-    max_component_elements: Big(u16),
-    max_component_depth: Big(u16),
-};
+//
+// Tables, their builders, and the on-disk layout in writer.zig are all
+// ordered by tag, the order the OpenType spec requires for the table
+// directory: OS/2, cmap, glyf, head, hhea, hmtx, loca, maxp, name, post.
 
 pub const Os2 = extern struct {
     version: Big(u16),
@@ -90,12 +32,12 @@ pub const Os2 = extern struct {
     y_strikeout_size: Big(i16),
     y_strikeout_position: Big(i16),
     s_family_class: Big(i16),
-    panose: [10]u8,
+    panose: [10]u8, // 10 PANOSE classification digits; all-zero = "any"
     ul_unicode_range1: Big(u32),
     ul_unicode_range2: Big(u32),
     ul_unicode_range3: Big(u32),
     ul_unicode_range4: Big(u32),
-    ach_vend_id: [4]u8,
+    ach_vend_id: [4]u8, // 4-char ASCII font vendor ID
     fs_selection: Big(u16),
     us_first_char_index: Big(u16),
     us_last_char_index: Big(u16),
@@ -111,35 +53,6 @@ pub const Os2 = extern struct {
     us_default_char: Big(u16),
     us_break_char: Big(u16),
     us_max_context: Big(u16),
-};
-
-pub const Post = extern struct {
-    version: Big(u32),
-    italic_angle: Big(i32),
-    underline_position: Big(i16),
-    underline_thickness: Big(i16),
-    is_fixed_pitch: Big(u32),
-    min_mem_type42: Big(u32),
-    max_mem_type42: Big(u32),
-    min_mem_type1: Big(u32),
-    max_mem_type1: Big(u32),
-};
-
-pub const NameRecord = extern struct {
-    platform_id: Big(u16),
-    encoding_id: Big(u16),
-    language_id: Big(u16),
-    name_id: Big(u16),
-    length: Big(u16),
-    string_offset: Big(u16),
-};
-
-pub const Name = extern struct {
-    format: Big(u16),
-    count: Big(u16),
-    string_offset: Big(u16),
-    records: [5]NameRecord,
-    string_data: [150]u8, // UTF-16BE encoded strings (75 ASCII chars)
 };
 
 pub const CmapEncodingRecord = extern struct {
@@ -186,6 +99,135 @@ pub const Cmap = extern struct {
     format12: CmapFormat12,
 };
 
+pub const Glyf = extern struct {
+    buf: [num_glyphs * MAX_GLYPH_SIZE]u8,
+    len: usize,
+};
+
+pub const Head = extern struct {
+    version_major: Big(u16),
+    version_minor: Big(u16),
+    font_revision: Big(u32),
+    checksum_adjustment: Big(u32),
+    magic_number: Big(u32),
+    flags: Big(u16),
+    units_per_em: Big(u16),
+    created: Big(i64),
+    modified: Big(i64),
+    x_min: Big(i16),
+    y_min: Big(i16),
+    x_max: Big(i16),
+    y_max: Big(i16),
+    mac_style: Big(u16),
+    lowest_rec_ppem: Big(u16),
+    font_direction_hint: Big(i16),
+    index_to_loc_format: Big(i16),
+    glyph_data_format: Big(i16),
+};
+
+pub const Hhea = extern struct {
+    major_version: Big(u16),
+    minor_version: Big(u16),
+    ascender: Big(i16),
+    descender: Big(i16),
+    line_gap: Big(i16),
+    advance_width_max: Big(u16),
+    min_left_side_bearing: Big(i16),
+    min_right_side_bearing: Big(i16),
+    x_max_extent: Big(i16),
+    caret_slope_rise: Big(i16),
+    caret_slope_run: Big(i16),
+    caret_offset: Big(i16),
+    reserved1: Big(i16),
+    reserved2: Big(i16),
+    reserved3: Big(i16),
+    reserved4: Big(i16),
+    metric_data_format: Big(i16),
+    number_of_h_metrics: Big(u16),
+};
+
+pub const HorizontalMetric = extern struct {
+    advance_width: Big(u16),
+    lsb: Big(i16),
+};
+
+// hmtx table: one full horizontal metric per glyph.
+pub const Hmtx = extern struct {
+    metrics: [num_glyphs]HorizontalMetric,
+};
+
+// loca table, long format (head.index_to_loc_format = 1): a u32 offset into
+// glyf for each glyph, plus a trailing sentinel offset marking the end.
+pub const Loca = extern struct {
+    offsets: [num_glyphs + 1]Big(u32),
+};
+
+pub const Maxp = extern struct {
+    version: Big(u32),
+    num_glyphs: Big(u16),
+    max_points: Big(u16),
+    max_contours: Big(u16),
+    max_composite_points: Big(u16),
+    max_composite_contours: Big(u16),
+    max_zones: Big(u16),
+    max_twilight_points: Big(u16),
+    max_storage: Big(u16),
+    max_function_defs: Big(u16),
+    max_instruction_defs: Big(u16),
+    max_stack_elements: Big(u16),
+    max_size_of_instructions: Big(u16),
+    max_component_elements: Big(u16),
+    max_component_depth: Big(u16),
+};
+
+pub const NameRecord = extern struct {
+    platform_id: Big(u16),
+    encoding_id: Big(u16),
+    language_id: Big(u16),
+    name_id: Big(u16),
+    length: Big(u16),
+    string_offset: Big(u16),
+};
+
+// The OpenType name strings, one per name ID. Every record length, string
+// offset, and the string-storage size below are derived from this list.
+const name_entries = [_]struct { id: u16, text: []const u8 }{
+    .{ .id = 1, .text = "Fidelitty Glyph Set" }, // family
+    .{ .id = 2, .text = "Regular" }, // subfamily
+    .{ .id = 4, .text = "Fidelitty Glyph Set" }, // full name
+    .{ .id = 5, .text = "Version 1.0" }, // version
+    .{ .id = 6, .text = "Fidelitty-Glyph-Set" }, // postscript name
+};
+
+// Total size of the string storage: every name string concatenated and
+// UTF-16BE encoded (2 bytes per ASCII character).
+const name_string_bytes = blk: {
+    var total: usize = 0;
+    for (name_entries) |entry| total += entry.text.len * 2;
+    break :blk total;
+};
+
+pub const Name = extern struct {
+    format: Big(u16),
+    count: Big(u16),
+    string_offset: Big(u16),
+    records: [name_entries.len]NameRecord,
+    string_data: [name_string_bytes]u8,
+};
+
+pub const Post = extern struct {
+    version: Big(u32),
+    italic_angle: Big(i32),
+    underline_position: Big(i16),
+    underline_thickness: Big(i16),
+    is_fixed_pitch: Big(u32),
+    min_mem_type42: Big(u32),
+    max_mem_type42: Big(u32),
+    min_mem_type1: Big(u32),
+    max_mem_type1: Big(u32),
+};
+
+// File container structures (not OpenType tables): the table directory.
 pub const OffsetTable = extern struct {
     sf_version: Big(u32),
     num_tables: Big(u16),
@@ -201,94 +243,15 @@ pub const TableRecord = extern struct {
     length: Big(u32),
 };
 
-// hmtx table: variable-length, per-glyph metric record
-pub const LongHorMetric = extern struct {
-    advance_width: Big(u16),
-    lsb: Big(i16),
-};
-
-pub const Glyf = extern struct {
-    buf: [num_glyphs * MAX_GLYPH_SIZE]u8,
-    len: usize,
-};
-
-pub const Loca = extern struct {
-    buf: [(num_glyphs + 1) * 4]u8,
-};
-
-pub const Hmtx = extern struct {
-    buf: [hmtx_size]u8,
-};
-
-pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
-    return .{
-        .version_major = .from(1),
-        .version_minor = .from(0),
-        .font_revision = .from(0x00010000),
-        .checksum_adjustment = .from(0), // filled later
-        .magic_number = .from(0x5F0F3CF5),
-        .flags = .from(0x000B),
-        .units_per_em = .from(@intCast(metrics.upm)),
-        .created = .from(0),
-        .modified = .from(0),
-        .x_min = .from(-rect_w),
-        .y_min = .from(-metrics.descent - rect_h),
-        .x_max = .from(@as(i16, @intCast(metrics.advance_width)) + rect_w),
-        .y_max = .from(metrics.ascent + rect_h),
-        .mac_style = .from(0),
-        .lowest_rec_ppem = .from(8),
-        .font_direction_hint = .from(2),
-        .index_to_loc_format = .from(1), // long
-        .glyph_data_format = .from(0),
-    };
-}
-
-pub fn buildHhea(metrics: UserFontMetrics, rect_w: i16) Hhea {
-    return .{
-        .major_version = .from(1),
-        .minor_version = .from(0),
-        .ascender = .from(metrics.ascent),
-        .descender = .from(-metrics.descent),
-        .line_gap = .from(metrics.line_gap),
-        .advance_width_max = .from(metrics.advance_width),
-        .min_left_side_bearing = .from(0),
-        .min_right_side_bearing = .from(0),
-        .x_max_extent = .from(@as(i16, @intCast(metrics.advance_width)) + rect_w),
-        .caret_slope_rise = .from(1),
-        .caret_slope_run = .from(0),
-        .caret_offset = .from(0),
-        .reserved1 = .from(0),
-        .reserved2 = .from(0),
-        .reserved3 = .from(0),
-        .reserved4 = .from(0),
-        .metric_data_format = .from(0),
-        .number_of_h_metrics = .from(1),
-    };
-}
-
-pub fn buildMaxp() Maxp {
-    return .{
-        .version = .from(0x00010000),
-        .num_glyphs = .from(@intCast(num_glyphs)),
-        .max_points = .from(MAX_CONTOURS * 4),
-        .max_contours = .from(MAX_CONTOURS),
-        .max_composite_points = .from(0),
-        .max_composite_contours = .from(0),
-        .max_zones = .from(1),
-        .max_twilight_points = .from(0),
-        .max_storage = .from(0),
-        .max_function_defs = .from(0),
-        .max_instruction_defs = .from(0),
-        .max_stack_elements = .from(0),
-        .max_size_of_instructions = .from(0),
-        .max_component_elements = .from(0),
-        .max_component_depth = .from(0),
-    };
+/// Builds a 16.16 fixed-point number: integer part in the high u16,
+/// fractional part in the low u16. Used for sfnt version/revision fields.
+fn fixed16_16(integer: u16, fraction: u16) u32 {
+    return (@as(u32, integer) << 16) | fraction;
 }
 
 pub fn buildOs2(metrics: UserFontMetrics) Os2 {
     return .{
-        .version = .from(4),
+        .version = .from(4), // OS/2 table version 4
         .x_avg_char_width = .from(@intCast(metrics.advance_width)),
         .us_weight_class = .from(400), // Normal
         .us_width_class = .from(5), // Medium
@@ -328,45 +291,31 @@ pub fn buildOs2(metrics: UserFontMetrics) Os2 {
     };
 }
 
-pub fn buildPost() Post {
-    return .{
-        .version = .from(0x00030000), // format 3.0 (no glyph names)
-        .italic_angle = .from(0),
-        .underline_position = .from(0),
-        .underline_thickness = .from(0),
-        .is_fixed_pitch = .from(0),
-        .min_mem_type42 = .from(0),
-        .max_mem_type42 = .from(0),
-        .min_mem_type1 = .from(0),
-        .max_mem_type1 = .from(0),
-    };
-}
-
-pub fn buildHmtx(advance: u16) Hmtx {
-    var hmtx: Hmtx = undefined;
-    const metric = LongHorMetric{
-        .advance_width = .from(advance),
-        .lsb = .from(0),
-    };
-    @memcpy(hmtx.buf[0..@sizeOf(LongHorMetric)], mem.asBytes(&metric));
-    // Remaining glyphs: just lsb (i16 each), all zero
-    @memset(hmtx.buf[@sizeOf(LongHorMetric)..], 0);
-    return hmtx;
-}
-
 pub fn buildCmap() Cmap {
     const codepoint_end = config.codepoint_start + num_glyphs - 1;
     return .{
         .version = .from(0),
         .num_tables = .from(3),
         .encoding_records = .{
-            .{ .platform_id = .from(0), .encoding_id = .from(3), .subtable_offset = .from(28) }, // Unicode BMP -> format 4
-            .{ .platform_id = .from(3), .encoding_id = .from(1), .subtable_offset = .from(28) }, // Windows UCS-2 -> format 4
-            .{ .platform_id = .from(3), .encoding_id = .from(10), .subtable_offset = .from(52) }, // Windows UCS-4 -> format 12
+            .{ // Unicode BMP -> format 4
+                .platform_id = .from(0),
+                .encoding_id = .from(3),
+                .subtable_offset = .from(@offsetOf(Cmap, "format4")),
+            },
+            .{ // Windows UCS-2 -> format 4
+                .platform_id = .from(3),
+                .encoding_id = .from(1),
+                .subtable_offset = .from(@offsetOf(Cmap, "format4")),
+            },
+            .{ // Windows UCS-4 -> format 12
+                .platform_id = .from(3),
+                .encoding_id = .from(10),
+                .subtable_offset = .from(@offsetOf(Cmap, "format12")),
+            },
         },
         .format4 = .{
             .format = .from(4),
-            .length = .from(24),
+            .length = .from(@sizeOf(CmapFormat4)),
             .language = .from(0),
             .seg_count_x2 = .from(2), // 1 sentinel segment
             .search_range = .from(2),
@@ -381,13 +330,91 @@ pub fn buildCmap() Cmap {
         .format12 = .{
             .format = .from(12),
             .reserved = .from(0),
-            .length = .from(28), // 16 header + 12 per group
+            .length = .from(@sizeOf(CmapFormat12)),
             .language = .from(0),
             .num_groups = .from(1),
             .start_char_code = .from(config.codepoint_start),
             .end_char_code = .from(codepoint_end),
             .start_glyph_id = .from(0),
         },
+    };
+}
+
+pub fn buildGlyf() Glyf {}
+
+pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
+    return .{
+        .version_major = .from(1),
+        .version_minor = .from(0),
+        .font_revision = .from(fixed16_16(1, 0)),
+        .checksum_adjustment = .from(0), // filled later
+        .magic_number = .from(0x5F0F3CF5), // required 'head' magic number
+        .flags = .from(0x000B), // bits 0,1,3: baseline@y=0, lsb@x=0, integer ppem
+        .units_per_em = .from(@intCast(metrics.upm)),
+        .created = .from(0),
+        .modified = .from(0),
+        .x_min = .from(-rect_w),
+        .y_min = .from(-metrics.descent - rect_h),
+        .x_max = .from(@as(i16, @intCast(metrics.advance_width)) + rect_w),
+        .y_max = .from(metrics.ascent + rect_h),
+        .mac_style = .from(0),
+        .lowest_rec_ppem = .from(8), // smallest legible size, in pixels per em
+        .font_direction_hint = .from(2), // deprecated field; 2 per spec
+        .index_to_loc_format = .from(1), // 1 = long (32-bit loca offsets)
+        .glyph_data_format = .from(0),
+    };
+}
+
+pub fn buildHhea(metrics: UserFontMetrics, rect_w: i16) Hhea {
+    return .{
+        .major_version = .from(1),
+        .minor_version = .from(0),
+        .ascender = .from(metrics.ascent),
+        .descender = .from(-metrics.descent),
+        .line_gap = .from(metrics.line_gap),
+        .advance_width_max = .from(metrics.advance_width),
+        .min_left_side_bearing = .from(0),
+        .min_right_side_bearing = .from(0),
+        .x_max_extent = .from(@as(i16, @intCast(metrics.advance_width)) + rect_w),
+        .caret_slope_rise = .from(1),
+        .caret_slope_run = .from(0),
+        .caret_offset = .from(0),
+        .reserved1 = .from(0),
+        .reserved2 = .from(0),
+        .reserved3 = .from(0),
+        .reserved4 = .from(0),
+        .metric_data_format = .from(0),
+        .number_of_h_metrics = .from(@intCast(num_glyphs)),
+    };
+}
+
+pub fn buildHmtx(advance: u16) Hmtx {
+    const metric: HorizontalMetric = .{
+        .advance_width = .from(advance),
+        .lsb = .from(0),
+    };
+    return .{
+        .metrics = .{metric} ** num_glyphs,
+    };
+}
+
+pub fn buildMaxp() Maxp {
+    return .{
+        .version = .from(fixed16_16(1, 0)),
+        .num_glyphs = .from(@intCast(num_glyphs)),
+        .max_points = .from(MAX_CONTOURS * 4),
+        .max_contours = .from(MAX_CONTOURS),
+        .max_composite_points = .from(0),
+        .max_composite_contours = .from(0),
+        .max_zones = .from(1),
+        .max_twilight_points = .from(0),
+        .max_storage = .from(0),
+        .max_function_defs = .from(0),
+        .max_instruction_defs = .from(0),
+        .max_stack_elements = .from(0),
+        .max_size_of_instructions = .from(0),
+        .max_component_elements = .from(0),
+        .max_component_depth = .from(0),
     };
 }
 
@@ -401,58 +428,41 @@ fn utf16be(comptime ascii: []const u8) [ascii.len * 2]u8 {
 }
 
 pub fn buildName() Name {
+    var records: [name_entries.len]NameRecord = undefined;
+    var string_data: [name_string_bytes]u8 = undefined;
+    var offset: u16 = 0;
+    inline for (name_entries, &records) |entry, *record| {
+        const encoded = utf16be(entry.text);
+        record.* = .{
+            .platform_id = .from(3), // Unicode; read by all modern platforms
+            .encoding_id = .from(1),
+            .language_id = .from(0),
+            .name_id = .from(entry.id),
+            .length = .from(encoded.len),
+            .string_offset = .from(offset),
+        };
+        @memcpy(string_data[offset..][0..encoded.len], &encoded);
+        offset += encoded.len;
+    }
     return .{
         .format = .from(0),
-        .count = .from(5),
-        .string_offset = .from(@sizeOf(Name) - 150), // header + records
-        .records = .{
-            .{ // family
-                .platform_id = .from(3),
-                .encoding_id = .from(1),
-                .language_id = .from(0),
-                .name_id = .from(1),
-                .length = .from(38),
-                .string_offset = .from(0),
-            },
-            .{ // style
-                .platform_id = .from(3),
-                .encoding_id = .from(1),
-                .language_id = .from(0),
-                .name_id = .from(2),
-                .length = .from(14),
-                .string_offset = .from(38),
-            },
-            .{ // full name
-                .platform_id = .from(3),
-                .encoding_id = .from(1),
-                .language_id = .from(0),
-                .name_id = .from(4),
-                .length = .from(38),
-                .string_offset = .from(52),
-            },
-            .{ // version
-                .platform_id = .from(3),
-                .encoding_id = .from(1),
-                .language_id = .from(0),
-                .name_id = .from(5),
-                .length = .from(22),
-                .string_offset = .from(90),
-            },
-            .{ // postscript name
-                .platform_id = .from(3),
-                .encoding_id = .from(1),
-                .language_id = .from(0),
-                .name_id = .from(6),
-                .length = .from(38),
-                .string_offset = .from(112),
-            },
-        },
-        // zig fmt: off
-        .string_data = utf16be("Fidelitty Glyph Set")
-            ++ utf16be("Regular")
-            ++ utf16be("Fidelitty Glyph Set")
-            ++ utf16be("Version 1.0")
-            ++ utf16be("Fidelitty-Glyph-Set"),
-        // zig fmt: on
+        .count = .from(name_entries.len),
+        .string_offset = .from(@sizeOf(Name) - name_string_bytes), // past header + records
+        .records = records,
+        .string_data = string_data,
+    };
+}
+
+pub fn buildPost() Post {
+    return .{
+        .version = .from(fixed16_16(3, 0)), // format 3.0: no glyph names
+        .italic_angle = .from(0),
+        .underline_position = .from(0),
+        .underline_thickness = .from(0),
+        .is_fixed_pitch = .from(0),
+        .min_mem_type42 = .from(0),
+        .max_mem_type42 = .from(0),
+        .min_mem_type1 = .from(0),
+        .max_mem_type1 = .from(0),
     };
 }
