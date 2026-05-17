@@ -12,6 +12,7 @@ pub const UserFontMetrics = struct {
     descent: i16,
     line_gap: i16,
     advance_width: u16,
+    units_per_em: u16,
 };
 
 pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
@@ -53,11 +54,16 @@ pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
     c.stbtt_GetCodepointHMetrics(&font, 'i', &thin_codepoint_advance, null);
     if (thin_codepoint_advance != advance_width) return error.FontNotMonospace;
 
+    // stb_truetype has no direct unitsPerEm getter; invert the em->pixel
+    // scale, which is defined as 1.0 / unitsPerEm.
+    const em_scale = c.stbtt_ScaleForMappingEmToPixels(&font, 1.0);
+
     const metrics: UserFontMetrics = .{
         .ascent = @intCast(ascent),
         .descent = @intCast(descent),
         .line_gap = @intCast(line_gap),
         .advance_width = @intCast(advance_width),
+        .units_per_em = @intFromFloat(@round(1.0 / em_scale)),
     };
 
     return metrics;

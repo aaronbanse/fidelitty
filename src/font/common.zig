@@ -19,10 +19,15 @@ pub fn Big(comptime T: type) type {
         pub fn from(val: T) @This() {
             return .{ .raw = @bitCast(std.mem.nativeToBig(T, val)) };
         }
+
+        pub fn write(self: @This(), buf: []u8) void {
+            @memcpy(buf[0..self.raw.len], &self.raw);
+        }
     };
 }
 
-pub fn writeBytes(buf: []u8, v: anytype) void {
-    const bytes = std.mem.asBytes(&v);
-    @memcpy(buf[0..bytes.len], bytes);
+/// Builds a 16.16 fixed-point number: integer part in the high u16,
+/// fractional part in the low u16. Used for sfnt version/revision fields.
+pub fn fixed16_16(integer: u16, fraction: u16) u32 {
+    return (@as(u32, integer) << 16) | fraction;
 }

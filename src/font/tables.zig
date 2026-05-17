@@ -3,10 +3,12 @@
 const config = @import("config");
 const common = @import("common.zig");
 const Big = common.Big;
+const fixed16_16 = common.fixed16_16;
 const num_glyphs = common.num_glyphs;
 const MAX_CONTOURS = common.MAX_CONTOURS;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
+const renderBitmap = @import("render_bitmap.zig").renderBitmap;
 
 // Table structs based on OpenType specification:
 // https://learn.microsoft.com/en-us/typography/opentype/spec/
@@ -243,12 +245,6 @@ pub const TableRecord = extern struct {
     length: Big(u32),
 };
 
-/// Builds a 16.16 fixed-point number: integer part in the high u16,
-/// fractional part in the low u16. Used for sfnt version/revision fields.
-fn fixed16_16(integer: u16, fraction: u16) u32 {
-    return (@as(u32, integer) << 16) | fraction;
-}
-
 pub fn buildOs2(metrics: UserFontMetrics) Os2 {
     return .{
         .version = .from(4), // OS/2 table version 4
@@ -340,7 +336,17 @@ pub fn buildCmap() Cmap {
     };
 }
 
-pub fn buildGlyf() Glyf {}
+pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, ascent: i16, rect_w: i16, rect_h: i16) void {
+    glyf.len = 0;
+    for (0..num_glyphs) |mask| {
+        loca.offsets[mask] = Big(u32).from(@intCast(glyf.len));
+        const size = renderBitmap(@intCast(mask), glyf.buf[glyf.len..], rect_w, rect_h, ascent);
+        glyf.len += @intCast(size);
+    }
+    // Trailing sentinel: glyph i's data spans loca[i]..loca[i + 1], so a final
+    // entry is needed to give the last glyph an end offset.
+    loca.offsets[num_glyphs] = Big(u32).from(@intCast(glyf.len));
+}
 
 pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
     return .{
@@ -350,7 +356,7 @@ pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
         .checksum_adjustment = .from(0), // filled later
         .magic_number = .from(0x5F0F3CF5), // required 'head' magic number
         .flags = .from(0x000B), // bits 0,1,3: baseline@y=0, lsb@x=0, integer ppem
-        .units_per_em = .from(@intCast(metrics.upm)),
+        .units_per_em = .from(metrics.units_per_em),
         .created = .from(0),
         .modified = .from(0),
         .x_min = .from(-rect_w),

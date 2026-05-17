@@ -1,11 +1,9 @@
-//! Glyph outline geometry: turns a cell bitmask into TrueType `glyf` data.
+//! Render glyph outline geometry: turns a cell bitmap into TrueType `glyf` data.
 
-// TODO: glyf.zig / glyph.zig is confusing. The difference is that a glyf is a opentype term and a glyph is a general font term? not sure, maybe ask llm.
 const std = @import("std");
 const math = std.math;
 const common = @import("common.zig");
 const Big = common.Big;
-const writeBytes = common.writeBytes;
 const cell_w = common.cell_w;
 const cell_h = common.cell_h;
 const num_glyphs = common.num_glyphs;
@@ -13,36 +11,9 @@ const MAX_CONTOURS = common.MAX_CONTOURS;
 const Glyf = @import("tables.zig").Glyf;
 const Loca = @import("tables.zig").Loca;
 
-const Rect = struct {
-    x0: i16,
-    y0: i16,
-    x1: i16,
-    y1: i16,
-};
-
-fn getGlyphRects(mask: usize, rects: *[MAX_CONTOURS]Rect, rect_w: i16, rect_h: i16, ascent: i16) u8 {
-    var count: u8 = 0;
-
-    for (0..(cell_w * cell_h)) |idx| {
-        if ((mask >> @intCast(idx)) & 1 == 0) continue;
-        const col: i16 = @intCast(idx % cell_w);
-        const row: i16 = @intCast(idx / cell_w);
-        const x0 = col * rect_w;
-        const y0 = ascent - (row + 1) * rect_h;
-        rects[count] = .{
-            .x0 = x0,
-            .y0 = y0,
-            .x1 = x0 + rect_w,
-            .y1 = y0 + rect_h,
-        };
-        count += 1;
-    }
-
-    return count;
-}
-
+// TODO: refactor this
 /// Returns the number of bytes written.
-fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) usize {
+pub fn renderBitmap(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) usize {
     if (mask == 0) return 0; // .notdef: empty
 
     var rects: [MAX_CONTOURS]Rect = undefined;
@@ -64,25 +35,25 @@ fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) u
     var off: usize = 0;
 
     // Header: numberOfContours, xMin, yMin, xMax, yMax
-    writeBytes(out[off..][0..2], @intCast(n_rects));
+    Big(i16).from(n_rects).write(out[off..]);
     off += 2;
-    writeBytes(out[off..][0..2], xmin);
+    Big(i16).from(xmin).write(out[off..]);
     off += 2;
-    writeBytes(out[off..][0..2], ymin);
+    Big(i16).from(ymin).write(out[off..]);
     off += 2;
-    writeBytes(out[off..][0..2], xmax);
+    Big(i16).from(xmax).write(out[off..]);
     off += 2;
-    writeBytes(out[off..][0..2], ymax);
+    Big(i16).from(ymax).write(out[off..]);
     off += 2;
 
     // endPtsOfContours
     for (0..n_rects) |i| {
-        writeBytes(out[off..][0..2], @intCast(i * 4 + 3));
+        Big(u16).from(@intCast(i * 4 + 3)).write(out[off..]);
         off += 2;
     }
 
     // instructionLength = 0
-    writeBytes(out[off..][0..2], 0);
+    Big(u16).from(0).write(out[off..]);
     off += 2;
 
     // Flags and coordinates
@@ -153,7 +124,7 @@ fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) u
             off += 1;
         } else {
             // i16
-            writeBytes(out[off..][0..2], d);
+            Big(i16).from(d).write(out[off..]);
             off += 2;
         }
     }
@@ -169,7 +140,7 @@ fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) u
             off += 1;
         } else {
             // i16
-            writeBytes(out[off..][0..2], d);
+            Big(i16).from(d).write(out[off..]);
             off += 2;
         }
     }
@@ -183,14 +154,30 @@ fn compileGlyph(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) u
     return off;
 }
 
-pub fn buildGlyf(glyf: *Glyf, loca: *Loca, ascent: i16, rect_w: i16, rect_h: i16) void {
-    glyf.len = 0;
-    for (0..num_glyphs) |mask| {
-        loca.offsets[mask] = Big(u32).from(@intCast(glyf.len));
-        const size = compileGlyph(@intCast(mask), glyf.buf[glyf.len..], rect_w, rect_h, ascent);
-        glyf.len += @intCast(size);
+const Rect = struct {
+    x0: i16,
+    y0: i16,
+    x1: i16,
+    y1: i16,
+};
+
+fn getGlyphRects(mask: usize, rects: *[MAX_CONTOURS]Rect, rect_w: i16, rect_h: i16, ascent: i16) u8 {
+    var count: u8 = 0;
+
+    for (0..(cell_w * cell_h)) |idx| {
+        if ((mask >> @intCast(idx)) & 1 == 0) continue;
+        const col: i16 = @intCast(idx % cell_w);
+        const row: i16 = @intCast(idx / cell_w);
+        const x0 = col * rect_w;
+        const y0 = ascent - (row + 1) * rect_h;
+        rects[count] = .{
+            .x0 = x0,
+            .y0 = y0,
+            .x1 = x0 + rect_w,
+            .y1 = y0 + rect_h,
+        };
+        count += 1;
     }
-    // Trailing sentinel: glyph i's data spans loca[i]..loca[i + 1], so a final
-    // entry is needed to give the last glyph an end offset.
-    loca.offsets[num_glyphs] = Big(u32).from(@intCast(glyf.len));
+
+    return count;
 }
