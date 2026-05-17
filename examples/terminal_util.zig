@@ -43,20 +43,20 @@ pub fn getCursorPos(io: Io) !struct { row: u16, col: u16 } {
     return .{ .row = row-1, .col = col-1 }; // convert back to 0-indexed
 }
 
-pub fn getDims() struct { cols: u16, rows: u16, cell_w: u16, cell_h: u16 } {
+pub fn getDims() struct { grid_w: u16, grid_h: u16, term_cell_px_w: u16, term_cell_px_h: u16 } {
     var wsz: posix.winsize = undefined;
     const rc = posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
 
     if (rc != 0) {
         debug.print("Error: ioctl failed with code {}", .{rc});
-        return .{ .cols = 0, .rows = 0, .cell_w = 0, .cell_h = 0 };
+        return .{ .grid_w = 0, .grid_h = 0, .term_cell_px_w = 0, .term_cell_px_h = 0 };
     }
 
     return .{
-        .cols = wsz.col,
-        .rows = wsz.row,
-        .cell_w = wsz.xpixel / wsz.col,
-        .cell_h = wsz.ypixel / wsz.row,
+        .grid_w = wsz.col,
+        .grid_h = wsz.row,
+        .term_cell_px_w = wsz.xpixel / wsz.col,
+        .term_cell_px_h = wsz.ypixel / wsz.row,
     };
 }
 

@@ -6,8 +6,9 @@ layout(local_size_x = 64) in;
 
 // Define a vector type for efficient operations on cells.
 // Since vector ops max out at vec4, we create a custom type packed with vec4's plus a remainder vec4.
-// Note that the remaining unused space in the last vec4 contains garbage values and affects
-// the result of dot products and other reduction operations.
+// The remaining unused space can be ignored for pointwise operations, but must be zeroed for reductive operations like dot product.
+
+// NOTE: VEC4_REMAINDER and VEC4_QUOTIENT defined in the glsl compilation command from the zig build system.
 
 #if VEC4_REMAINDER == 0
     #define N_VEC4 VEC4_QUOTIENT
@@ -96,7 +97,7 @@ layout(std430, set = 1, binding = 1) buffer OutputImage { UnicodePixel[] pixels;
 layout(push_constant) uniform PushConstants {
     uint num_codepoints;
 
-    uint out_im_w;
+    uint grid_w;
 
     // subarea of image dispatch covers
     uint dispatch_x;
@@ -107,16 +108,17 @@ layout(push_constant) uniform PushConstants {
     // bytes-per-pixel: number of color channels - only supports 3 or 4 currently
     uint input_bpp;
 
-    // indices to shuffle by (swizzling) - cell set to 3 will be ignored as we don't use alpha, just rgb.
+    // indices to shuffle by (swizzling) - a component set to 3 will be ignored as we don't use alpha, just rgb.
     // the swizzle from bgra to rgb would be: [ 2, 1, 0 ].
     ivec3 swizzle;
 
     // input image pixels per cell
-    uint cell_pix_w;
-    uint cell_pix_h;
+    uint im_patch_w;
+    uint im_patch_h;
 
-    uint cell_cols;
-    uint cell_rows;
+    // cell resolution in sub-blocks (glyph mask dimensions)
+    uint cell_w;
+    uint cell_h;
 } pc;
 
 struct ImageCell {
@@ -139,21 +141,21 @@ void main() {
 
     const uint out_x = (local_idx % pc.dispatch_w) + pc.dispatch_x;
     const uint out_y = (local_idx / pc.dispatch_w) + pc.dispatch_y;
-    const uint out_idx = out_y * pc.out_im_w + out_x;
+    const uint out_idx = out_y * pc.grid_w + out_x;
 
-    const uint in_x = out_x * pc.cell_pix_w;
-    const uint in_y = out_y * pc.cell_pix_h;
-    const uint in_im_w = pc.out_im_w * pc.cell_pix_w;
+    const uint in_x = out_x * pc.im_patch_w;
+    const uint in_y = out_y * pc.im_patch_h;
+    const uint in_im_w = pc.grid_w * pc.im_patch_w;
 
     // Sample pixels from input image into cell
     ImageCell cell;
     zeroUnused(cell.rgb[0]);
     zeroUnused(cell.rgb[1]);
     zeroUnused(cell.rgb[2]);
-    for (uint row = 0; row < pc.cell_rows; row++) {
+    for (uint row = 0; row < pc.cell_h; row++) {
         const uint row_base = (in_y + row) * in_im_w + in_x;
-        for (uint col = 0; col < pc.cell_cols; col++) {
-            uint src_col = col * pc.cell_pix_w / pc.cell_cols;
+        for (uint col = 0; col < pc.cell_w; col++) {
+            uint src_col = col * pc.im_patch_w / pc.cell_w;
             uint byte_off = (row_base + src_col) * pc.input_bpp;
             for (uint c = 0; c < 3; c++) {
                 float val = float(rgb[byte_off + pc.swizzle[c]]);
@@ -186,9 +188,8 @@ void main() {
     // Recomputing colors for best_i avoids branching in the main loop.
     // Conditionally copying a vec2[3] into a 'best rgb solved' variable
     // is a full branch, versus conditionally storing a usize into 'best_i',
-    // which reduces to a conditional move instruction. (I think)
-
-    // TODO: profile it to be sure
+    // which reduces to an OpSelect (verified in the SPIR-V disassembly).
+    // OpSelect should in turn be lowered to a conditional move by the driver.
 
     vec2 r_solved = solveChannel(best_i, color_eqns[best_i], cell.rgb[0]);
     vec2 g_solved = solveChannel(best_i, color_eqns[best_i], cell.rgb[1]);

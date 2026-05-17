@@ -1,12 +1,10 @@
 const std = @import("std");
-const mem = std.mem;
 
 const vk = @import("vulkan");
 
 const gen_config = @import("gen_config");
 const config = @import("config");
 
-const uni_im = @import("unicode_image.zig");
 const glyph = @import("glyph.zig");
 
 pub const PixelFormat = enum(u8) {
@@ -30,25 +28,38 @@ pub const PixelFormat = enum(u8) {
     }
 };
 
+/// Output of the pipeline for each terminal cell.
+/// Encodes the foreground / background colors and the codepoint.
+/// Fg / bg colors can be set with escape sequences in most modern terminals.
+pub const UnicodePixelData = extern struct {
+    br: u8,
+    bg: u8,
+    bb: u8,
+    fr: u8,
+    fg: u8,
+    fb: u8,
+    _pad: u16,
+    codepoint: u32,
+};
+
 /// Non-owning handle to a render pipeline managed by compute context
 pub const PipelineHandle = struct {
-    out_im_w: u16,
-    out_im_h: u16,
+    grid_w: u16,
+    grid_h: u16,
 
     input_surface: [*]u8,
-    output_surface: [*]uni_im.UnicodePixelData,
+    output_surface: [*]UnicodePixelData,
 
     pixel_format: PixelFormat,
-    // TODO: fix name to remove comments
-    src_cell_cols: u8, // source pixels per cell horizontally
-    src_cell_rows: u8, // source pixels per cell vertically
+    im_patch_w: u8, // input-image pixels per cell, horizontally
+    im_patch_h: u8, // input-image pixels per cell, vertically
 
     _id: Context.HandleID,
 
     pub fn inputDims(self: @This()) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, self.src_cell_cols),
-            .h = @as(u32, self.out_im_h) * @as(u32, self.src_cell_rows),
+            .w = @as(u32, self.grid_w) * @as(u32, self.im_patch_w),
+            .h = @as(u32, self.grid_h) * @as(u32, self.im_patch_h),
         };
     }
 };
@@ -93,13 +104,14 @@ pub const Context = struct {
     _device_color_eqn_buf: MemBuffer,
     _num_codepoints: u32,
 
-    _cell_cols: u8,
-    _cell_rows: u8,
+    _cell_w: u8,
+    _cell_h: u8,
 
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
 
     _glyph_set_desc_set: vk.DescriptorSet,
 
+    // TODO: heap allocate these to prevent pointers to stack vars
     // Vulkan convenience wrappers
     _vkb: vk.BaseWrapper,
     _vki: vk.InstanceWrapper,
@@ -111,11 +123,11 @@ pub const Context = struct {
     _desc_pool: vk.DescriptorPool,
 
     /// Initialize a standalone vulkan context and setup machinery
-    pub fn init(self: *@This(), allocator: mem.Allocator, max_pipelines: u8) !void {
+    pub fn init(self: *@This(), allocator: std.mem.Allocator, max_pipelines: u8) !void {
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
-        self._cell_cols = config.cell_cols;
-        self._cell_rows = config.cell_rows;
+        self._cell_w = config.cell_w;
+        self._cell_h = config.cell_h;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -126,14 +138,14 @@ pub const Context = struct {
 
         // load glyph dataset to gpu
         const Dataset = glyph.UnicodeGlyphDataset(
-            config.cell_cols,
-            config.cell_rows,
+            config.cell_w,
+            config.cell_h,
         );
         var dataset: Dataset = .init();
 
         try self.createGlyphSet(
-            config.cell_cols,
-            config.cell_rows,
+            config.cell_w,
+            config.cell_h,
             &dataset,
         );
     }
@@ -162,29 +174,29 @@ pub const Context = struct {
         self._instance.destroyInstance(null);
     }
 
-    fn computeInputSize(im_w: u16, im_h: u16, pixel_format: PixelFormat, src_cell_cols: u8, src_cell_rows: u8) usize {
+    fn computeInputSize(grid_w: u16, grid_h: u16, pixel_format: PixelFormat, im_patch_w: u8, im_patch_h: u8) usize {
         const bpp: usize = pixel_format.bpp();
-        return bpp * @as(usize, im_w) * @as(usize, src_cell_cols) * @as(usize, im_h) * @as(usize, src_cell_rows);
+        return bpp * @as(usize, grid_w) * @as(usize, im_patch_w) * @as(usize, grid_h) * @as(usize, im_patch_h);
     }
 
     pub fn createRenderPipeline(
         self: *@This(),
-        im_w: u16,
-        im_h: u16,
+        grid_w: u16,
+        grid_h: u16,
     ) !PipelineHandle {
-        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._cell_cols, self._cell_rows);
+        return self.createRenderPipelineEx(grid_w, grid_h, .rgb, self._cell_w, self._cell_h);
     }
 
     pub fn createRenderPipelineEx(
         self: *@This(),
-        im_w: u16,
-        im_h: u16,
+        grid_w: u16,
+        grid_h: u16,
         pixel_format: PixelFormat,
-        src_cell_cols: u8,
-        src_cell_rows: u8,
+        im_patch_w: u8,
+        im_patch_h: u8,
     ) !PipelineHandle {
-        const input_size = computeInputSize(im_w, im_h, pixel_format, src_cell_cols, src_cell_rows);
-        const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
+        const input_size = computeInputSize(grid_w, grid_h, pixel_format, im_patch_w, im_patch_h);
+        const output_size = @as(usize, grid_w) * @as(usize, grid_h) * @sizeOf(UnicodePixelData);
 
         var resources: PipelineResources = undefined;
         try self.createPipelineBuffers(&resources, input_size, output_size);
@@ -192,14 +204,14 @@ pub const Context = struct {
         try self.createDescriptorSets(&resources);
 
         var handle: PipelineHandle = .{
-            .out_im_w = im_w,
-            .out_im_h = im_h,
+            .grid_w = grid_w,
+            .grid_h = grid_h,
             .input_surface = undefined,
             .output_surface = undefined,
             ._id = undefined,
             .pixel_format = pixel_format,
-            .src_cell_cols = src_cell_cols,
-            .src_cell_rows = src_cell_rows,
+            .im_patch_w = im_patch_w,
+            .im_patch_h = im_patch_h,
         };
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
 
@@ -216,8 +228,8 @@ pub const Context = struct {
         return handle;
     }
 
-    pub fn executeRenderPipelineAll(self: *@This(), handle: PipelineHandle) !void {
-        return self.executeRenderPipelineRegion(handle, 0, 0, handle.out_im_w, handle.out_im_h);
+    pub fn executeRenderPipeline(self: *@This(), handle: PipelineHandle) !void {
+        return self.executeRenderPipelineRegion(handle, 0, 0, handle.grid_w, handle.grid_h);
     }
 
     pub fn executeRenderPipelineRegion(
@@ -258,13 +270,13 @@ pub const Context = struct {
         _ = try self._device.waitForFences(&.{res.pipeline_complete}, .true, timeout);
     }
 
-    pub fn resizeRenderPipeline(self: *@This(), handle: *PipelineHandle, new_w: u16, new_h: u16) !void {
+    pub fn resizeRenderPipeline(self: *@This(), handle: *PipelineHandle, new_grid_w: u16, new_grid_h: u16) !void {
         const res = self._pipelines.getPtr(handle._id) orelse return error.InvalidPipelineHandle;
 
         try self.waitRenderPipeline(handle.*);
 
-        const new_input_size = computeInputSize(new_w, new_h, handle.pixel_format, handle.src_cell_cols, handle.src_cell_rows);
-        const new_output_size = @as(usize, new_w) * @as(usize, new_h) * @sizeOf(uni_im.UnicodePixelData);
+        const new_input_size = computeInputSize(new_grid_w, new_grid_h, handle.pixel_format, handle.im_patch_w, handle.im_patch_h);
+        const new_output_size = @as(usize, new_grid_w) * @as(usize, new_grid_h) * @sizeOf(UnicodePixelData);
 
         self._device.unmapMemory(res.input_buf.mem);
         self._device.unmapMemory(res.output_buf.mem);
@@ -314,8 +326,8 @@ pub const Context = struct {
 
         try self.allocatePipelineCommandResources(res);
 
-        handle.out_im_w = new_w;
-        handle.out_im_h = new_h;
+        handle.grid_w = new_grid_w;
+        handle.grid_h = new_grid_h;
     }
 
     pub fn destroyRenderPipelines(self: *@This(), handles: []PipelineHandle) void {
@@ -401,7 +413,7 @@ pub const Context = struct {
 
     fn createDescriptorPool(self: *@This(), max_pipelines: u8) !void {
         self._desc_pool = try self._device.createDescriptorPool(&.{
-            .max_sets = 1 + max_pipelines,
+            .max_sets = 1 + max_pipelines, // 1 for static data, 1 for each pipeline
             .pool_size_count = 1,
             .p_pool_sizes = &[_]vk.DescriptorPoolSize{
                 .{
@@ -470,11 +482,11 @@ pub const Context = struct {
 
     fn createGlyphSet(
         self: *@This(),
-        comptime w: u8,
-        comptime h: u8,
-        glyph_set: *const glyph.UnicodeGlyphDataset(w, h),
+        comptime cell_w: u8,
+        comptime cell_h: u8,
+        glyph_set: *const glyph.UnicodeGlyphDataset(cell_w, cell_h),
     ) !void {
-        self._num_codepoints = glyph.UnicodeGlyphDataset(w, h).numCodepoints();
+        self._num_codepoints = glyph.UnicodeGlyphDataset(cell_w, cell_h).numCodepoints();
 
         self._device_codepoint_buf = try self.allocateMemBuffer(
             glyph_set.codepoints.len * @sizeOf(u32),
@@ -482,7 +494,7 @@ pub const Context = struct {
             .{ .device_local_bit = true },
         );
         self._device_mask_buf = try self.allocateMemBuffer(
-            glyph_set.masks.len * @sizeOf(glyph.GlyphMask(w, h)),
+            glyph_set.masks.len * @sizeOf(glyph.GlyphMask(cell_w, cell_h)),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
@@ -546,7 +558,7 @@ pub const Context = struct {
         // Coalesce all 3 buffers in the dataset into one staging buffer and push to the gpu
 
         const staging_buffer = try self.allocateMemBuffer(
-            self._num_codepoints * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w, h)) + @sizeOf(glyph.ColorEqnCache)),
+            self._num_codepoints * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(cell_w, cell_h)) + @sizeOf(glyph.ColorEqnCache)),
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
@@ -560,7 +572,7 @@ pub const Context = struct {
         ) orelse return error.MapMemoryFailed;
 
         // NOTE: staging ptr masks is placed first, since it has very strict alignment requirements.
-        const staging_ptr_masks: [*]glyph.GlyphMask(w, h) = @ptrCast(@alignCast(staging_ptr_raw));
+        const staging_ptr_masks: [*]glyph.GlyphMask(cell_w, cell_h) = @ptrCast(@alignCast(staging_ptr_raw));
         const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints));
         const staging_ptr_eqns: [*]glyph.ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints));
 
@@ -756,7 +768,7 @@ pub const Context = struct {
 
     const PushConstants = extern struct {
         num_codepoints: u32,
-        out_im_w: u32,
+        grid_w: u32,
         dispatch_x: u32,
         dispatch_y: u32,
         dispatch_w: u32,
@@ -764,10 +776,10 @@ pub const Context = struct {
         input_bpp: u32,
         _pad: u32,
         swizzle: [3]i32,
-        input_cell_cols: u32,
-        input_cell_rows: u32,
-        patch_w: u32,
-        patch_h: u32,
+        im_patch_w: u32,
+        im_patch_h: u32,
+        cell_w: u32,
+        cell_h: u32,
     };
 
     fn allocatePipelineCommandResources(self: *@This(), res: *PipelineResources) !void {
@@ -828,7 +840,7 @@ pub const Context = struct {
         // upload uniforms as push constants
         const push = PushConstants{
             .num_codepoints = self._num_codepoints,
-            .out_im_w = handle.out_im_w,
+            .grid_w = handle.grid_w,
             .dispatch_x = dispatch_x,
             .dispatch_y = dispatch_y,
             .dispatch_w = dispatch_w,
@@ -836,10 +848,10 @@ pub const Context = struct {
             .input_bpp = handle.pixel_format.bpp(),
             ._pad = 0,
             .swizzle = handle.pixel_format.swizzle(),
-            .input_cell_cols = handle.src_cell_cols,
-            .input_cell_rows = handle.src_cell_rows,
-            .patch_w = self._cell_cols,
-            .patch_h = self._cell_rows,
+            .im_patch_w = handle.im_patch_w,
+            .im_patch_h = handle.im_patch_h,
+            .cell_w = self._cell_w,
+            .cell_h = self._cell_h,
         };
 
         self._device.cmdPushConstants(
@@ -921,7 +933,7 @@ pub const Context = struct {
         self: *@This(),
         res: *PipelineResources,
         input_surface: *[*]u8,
-        output_surface: *[*]uni_im.UnicodePixelData,
+        output_surface: *[*]UnicodePixelData,
     ) !void {
         const input_raw: *anyopaque = try self._device.mapMemory(
             res.input_buf.mem,

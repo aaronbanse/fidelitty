@@ -6,14 +6,18 @@ const mem = std.mem;
 
 const ftty = @import("fidelitty");
 
+// Experimental terminal frontend — kept in examples/ rather than the library.
+const terminal = @import("terminal_util.zig");
+const UnicodeImage = @import("unicode_image.zig").UnicodeImage;
+
 const c = @cImport({
     @cInclude("stb_image.h");
 });
 
 pub fn main() !void {
     // Config constants
-    const patch_w = ftty.dataset_config.cell_virtual_w;
-    const patch_h = ftty.dataset_config.cell_virtual_h;
+    const im_patch_w = ftty.config.cell_w;
+    const im_patch_h = ftty.config.cell_h;
 
     // set this to your desired image path
     const IMAGE_PATH = "examples/assets/kitty.jpg";
@@ -42,15 +46,15 @@ pub fn main() !void {
     defer compute_context.deinit();
 
     // create a render pipeline
-    const term_dims = ftty.terminal.getDims();
-    const out_image_h: u16 = term_dims.rows;
-    const out_image_w: u16 = @intFromFloat(@as(f32, @floatFromInt(term_dims.rows * term_dims.cell_h)) // new_h
-        * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.cell_w))); // old_w / old_h
-    var pipeline_handle = try compute_context.createRenderPipeline(out_image_w, out_image_h);
+    const term_dims = terminal.getDims();
+    const grid_h: u16 = term_dims.grid_h;
+    const grid_w: u16 = @intFromFloat(@as(f32, @floatFromInt(term_dims.grid_h * term_dims.term_cell_px_h)) // new_h
+        * (@as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h))) / @as(f32, @floatFromInt(term_dims.term_cell_px_w))); // old_w / old_h
+    var pipeline_handle = try compute_context.createRenderPipeline(grid_w, grid_h);
 
-    // get ratio of image size to expected input size (out image size * patch size)
-    const exp_input_w: usize = @as(usize, out_image_w) * @as(usize, patch_w);
-    const exp_input_h: usize = @as(usize, out_image_h) * @as(usize, patch_h);
+    // get ratio of image size to expected input size (grid size * im_patch size)
+    const exp_input_w: usize = @as(usize, grid_w) * @as(usize, im_patch_w);
+    const exp_input_h: usize = @as(usize, grid_h) * @as(usize, im_patch_h);
     const x_rat: f32 = @as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(exp_input_w));
     const y_rat: f32 = @as(f32, @floatFromInt(img_h)) / @as(f32, @floatFromInt(exp_input_h));
 
@@ -68,16 +72,16 @@ pub fn main() !void {
     }
 
     // Init output image to fill terminal
-    var out_image: ftty.UnicodeImage = try .init(allocator, out_image_w, out_image_h);
+    var out_image: UnicodeImage = try .init(allocator, grid_w, grid_h);
     defer out_image.deinit(allocator);
 
     // reserve space on the screen for our image to avoid overwriting
-    try ftty.terminal.reserveVerticalSpace(io, out_image.height);
-    var cursor_pos = try ftty.terminal.getCursorPos(io);
+    try terminal.reserveVerticalSpace(io, out_image.grid_h);
+    var cursor_pos = try terminal.getCursorPos(io);
     out_image.setPos(cursor_pos.col, cursor_pos.row);
 
     // run pipeline
-    try compute_context.executeRenderPipelineAll(pipeline_handle);
+    try compute_context.executeRenderPipeline(pipeline_handle);
 
     // wait on completion
     try compute_context.waitRenderPipeline(pipeline_handle);
@@ -86,20 +90,20 @@ pub fn main() !void {
     try out_image.draw(io);
 
     // resize and reposition the image to overlap the other image
-    const out_image_w_small = out_image_w / 2;
-    const out_image_h_small = out_image_h / 2;
-    try ftty.terminal.reserveVerticalSpace(io, out_image_h_small -| 20);
-    cursor_pos = try ftty.terminal.getCursorPos(io);
+    const grid_w_small = grid_w / 2;
+    const grid_h_small = grid_h / 2;
+    try terminal.reserveVerticalSpace(io, grid_h_small -| 20);
+    cursor_pos = try terminal.getCursorPos(io);
     out_image.setPos(cursor_pos.col + 50, cursor_pos.row -| 20);
-    try out_image.resize(allocator, out_image_w_small, out_image_h_small);
+    try out_image.resize(allocator, grid_w_small, grid_h_small);
 
     // resize the pipeline - will be tied to the image in the future
-    try compute_context.resizeRenderPipeline(&pipeline_handle, out_image_w_small, out_image_h_small);
+    try compute_context.resizeRenderPipeline(&pipeline_handle, grid_w_small, grid_h_small);
 
     // read in data for smaller image
-    // get ratio of image size to expected input size (out image size * patch size)
-    const exp_input_w_small: usize = @as(usize, out_image_w_small) * @as(usize, patch_w);
-    const exp_input_h_small: usize = @as(usize, out_image_h_small) * @as(usize, patch_h);
+    // get ratio of image size to expected input size (grid size * im_patch size)
+    const exp_input_w_small: usize = @as(usize, grid_w_small) * @as(usize, im_patch_w);
+    const exp_input_h_small: usize = @as(usize, grid_h_small) * @as(usize, im_patch_h);
     const x_rat_small: f32 = @as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(exp_input_w_small));
     const y_rat_small: f32 = @as(f32, @floatFromInt(img_h)) / @as(f32, @floatFromInt(exp_input_h_small));
 
@@ -117,7 +121,7 @@ pub fn main() !void {
     }
 
     // run pipeline
-    try compute_context.executeRenderPipelineAll(pipeline_handle);
+    try compute_context.executeRenderPipeline(pipeline_handle);
 
     // wait on completion
     try compute_context.waitRenderPipeline(pipeline_handle);
