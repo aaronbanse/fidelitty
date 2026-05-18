@@ -1,15 +1,22 @@
 //! Generates a Fidelitty glyph-set OpenType font from a user-supplied font.
 
+// fc-match --format='%{file}\n'
+
 const std = @import("std");
 const ftty = @import("fidelitty");
 
-fn cmdInit(io: std.Io, args: []const [:0]const u8) !void {
+fn cmdInit(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    args: []const [:0]const u8,
+    user_home_dir: []const u8,
+) !void {
     const root = std.Progress.start(io, .{ .root_name = "Init" });
     defer root.end();
 
     const user_font_path = args[2];
     const gen_node = root.start("Generate fidelitty rendering font", 1);
-    try ftty.initFont(io, user_font_path);
+    try ftty.initFont(io, allocator, user_font_path, user_home_dir);
     gen_node.end();
 }
 
@@ -40,7 +47,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, args[1], "init")) {
-        return try cmdInit(io, args);
+        const home_dir = init.environ_map.get("HOME") orelse return error.NoHomeDir;
+        return try cmdInit(io, arena, args, home_dir);
     } else if (std.mem.eql(u8, args[1], "compute")) {
         return try cmdCompute(io, args);
     } else {

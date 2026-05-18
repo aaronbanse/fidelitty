@@ -8,14 +8,14 @@ pub fn build(b: *std.Build) void {
     const CELL_W = 4;
     const CELL_H = 4;
 
-    const FONT_DIR = "~/.local/share/fonts/fidelitty";
+    const FONT_DIR_FROM_HOME = ".local/share/fonts/fidelitty";
     const FONT_NAME = "fidelitty.ttf";
 
     const config = b.addOptions();
     config.addOption(u8, "cell_w", CELL_W);
     config.addOption(u8, "cell_h", CELL_H);
     config.addOption(u32, "codepoint_start", CODEPOINT_START);
-    config.addOption([]const u8, "font_dir", FONT_DIR);
+    config.addOption([]const u8, "font_dir_from_home", FONT_DIR_FROM_HOME);
     config.addOption([]const u8, "font_name", FONT_NAME);
 
     const target = b.standardTargetOptions(.{});

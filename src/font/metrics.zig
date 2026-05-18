@@ -15,6 +15,11 @@ pub const UserFontMetrics = struct {
     units_per_em: u16,
 };
 
+/// OpenType constrains `unitsPerEm` to [16, 16384]. A value outside this range
+/// means the font data was misparsed (e.g. garbage bytes from a bad mapping).
+const min_units_per_em = 16;
+const max_units_per_em = 16384;
+
 pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
     // try absolute path and relative path
     const font_file: Io.File = blk: {
@@ -24,18 +29,18 @@ pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
             break :blk try Io.Dir.openFileAbsolute(io, user_font_path, .{});
         }
     };
+    defer font_file.close(io);
+
     const font_stats = try font_file.stat(io);
     const font_size = font_stats.size;
-    // TODO: handle errors
-    // TODO: unmap and close file
-    const font_data: [*]const u8 = @ptrCast(c.mmap(
-        null,
-        font_size,
-        c.PROT_READ,
-        c.MAP_PRIVATE,
-        font_file.handle,
-        0,
-    ));
+
+    if (font_size == 0) return error.FontFileEmpty;
+
+    const map = c.mmap(null, font_size, c.PROT_READ, c.MAP_PRIVATE, font_file.handle, 0);
+    if (map == c.MAP_FAILED) return error.FontMmapFailed;
+    defer _ = c.munmap(map, font_size);
+
+    const font_data: [*]const u8 = @ptrCast(map);
 
     var font: c.stbtt_fontinfo = undefined;
     if (c.stbtt_InitFont(&font, font_data, 0) == 0) {
@@ -53,18 +58,25 @@ pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
     var thin_codepoint_advance: c_int = undefined;
     c.stbtt_GetCodepointHMetrics(&font, 'i', &thin_codepoint_advance, null);
     if (thin_codepoint_advance != advance_width) return error.FontNotMonospace;
+    // A zero advance passes the monospace check above (0 == 0) but is never
+    // valid; catch it so misparsed fonts fail loudly instead of producing
+    // zero-sized glyphs downstream.
+    if (advance_width <= 0) return error.FontMissingAdvanceWidth;
 
     // stb_truetype has no direct unitsPerEm getter; invert the em->pixel
     // scale, which is defined as 1.0 / unitsPerEm.
     const em_scale = c.stbtt_ScaleForMappingEmToPixels(&font, 1.0);
+    if (em_scale <= 0) return error.FontInvalidScale;
+    const units_per_em = @round(1.0 / em_scale);
+    if (units_per_em < min_units_per_em or units_per_em > max_units_per_em) {
+        return error.FontInvalidUnitsPerEm;
+    }
 
-    const metrics: UserFontMetrics = .{
-        .ascent = @intCast(ascent),
-        .descent = @intCast(descent),
-        .line_gap = @intCast(line_gap),
-        .advance_width = @intCast(advance_width),
-        .units_per_em = @intFromFloat(@round(1.0 / em_scale)),
+    return .{
+        .ascent = std.math.cast(i16, ascent) orelse return error.FontMetricsOutOfRange,
+        .descent = std.math.cast(i16, descent) orelse return error.FontMetricsOutOfRange,
+        .line_gap = std.math.cast(i16, line_gap) orelse return error.FontMetricsOutOfRange,
+        .advance_width = std.math.cast(u16, advance_width) orelse return error.FontMetricsOutOfRange,
+        .units_per_em = @intFromFloat(units_per_em),
     };
-
-    return metrics;
 }

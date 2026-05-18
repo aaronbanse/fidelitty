@@ -38,21 +38,31 @@ const buildName = tables_mod.buildName;
 const buildPost = tables_mod.buildPost;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
 
-pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
+pub fn generateFromMetrics(
+    io: Io,
+    allocator: mem.Allocator,
+    metrics: UserFontMetrics,
+    user_home_dir: []const u8,
+) !void {
     // MAJOR TODO: depend on glyph.zig for all of our dataset generation,
     // Derive bit ordering and everything from that file. one source of truth
 
-    const glyph_rect_w = @divExact(metrics.advance_width, cell_w);
-    const glyph_rect_h = @divExact(metrics.ascent + metrics.descent, cell_h);
+    // Dims of rectangles used to render bitmap
+    const glyph_rect_w = @divFloor(metrics.advance_width, cell_w);
+    const glyph_rect_h = @divFloor(metrics.ascent + metrics.descent, cell_h);
 
     const os2 = buildOs2(metrics);
     const cmap = buildCmap();
 
-    var glyf: Glyf = undefined;
-    var loca: Loca = undefined;
+    // glyf and loca are large, these must be heap-allocated
+    // to avoid stack overflow. (Woah he said the thing!)
+    const glyf = try allocator.create(Glyf);
+    defer allocator.destroy(glyf);
+    const loca = try allocator.create(Loca);
+    defer allocator.destroy(loca);
     buildGlyfLoca(
-        &glyf,
-        &loca,
+        glyf,
+        loca,
         metrics.ascent,
         @intCast(glyph_rect_w),
         @intCast(glyph_rect_h),
@@ -81,7 +91,7 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
         .{ .tag = "head", .data = mem.asBytes(&head), .padded_len = undefined },
         .{ .tag = "hhea", .data = mem.asBytes(&hhea), .padded_len = undefined },
         .{ .tag = "hmtx", .data = mem.asBytes(&hmtx), .padded_len = undefined },
-        .{ .tag = "loca", .data = mem.asBytes(&loca), .padded_len = undefined },
+        .{ .tag = "loca", .data = mem.asBytes(loca), .padded_len = undefined },
         .{ .tag = "maxp", .data = mem.asBytes(&maxp), .padded_len = undefined },
         .{ .tag = "name", .data = mem.asBytes(&name), .padded_len = undefined },
         .{ .tag = "post", .data = mem.asBytes(&post), .padded_len = undefined },
@@ -105,8 +115,9 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
             padTo4(@sizeOf(Loca)) + padTo4(@sizeOf(Maxp)) +
             padTo4(@sizeOf(Name)) + padTo4(@sizeOf(Post));
     };
-    var out: [max_output_size]u8 = undefined;
-    @memset(&out, 0);
+    const out = try allocator.alloc(u8, max_output_size);
+    defer allocator.free(out);
+    @memset(out, 0);
 
     // Write offset table header
     const sr = blk: {
@@ -147,8 +158,8 @@ pub fn generateFromMetrics(io: Io, metrics: UserFontMetrics) !void {
     const head_data_offset = mem.bigToNative(u32, @bitCast(head_rec.offset.raw));
     Big(u32).from(0xB1B0AFBA -% whole_checksum).write(out[head_data_offset + @offsetOf(Head, "checksum_adjustment") ..]);
 
-    const root = try Io.Dir.cwd().openDir(io, "/", .{});
-    const font_dir = try root.createDirPathOpen(io, config.font_dir, .{});
+    const home = try Io.Dir.cwd().openDir(io, user_home_dir, .{});
+    const font_dir = try home.createDirPathOpen(io, config.font_dir_from_home, .{});
     const font_file = try font_dir.createFile(io, config.font_name, .{});
     try font_file.writePositionalAll(io, out[0..total_size], 0);
 }

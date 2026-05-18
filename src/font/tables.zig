@@ -276,7 +276,7 @@ pub fn buildOs2(metrics: UserFontMetrics) Os2 {
         .s_typo_descender = .from(-metrics.descent),
         .s_typo_line_gap = .from(metrics.line_gap),
         .us_win_ascent = .from(@intCast(metrics.ascent)),
-        .us_win_descent = .from(@intCast(metrics.descent)),
+        .us_win_descent = .from(@intCast(-metrics.descent)),
         .ul_code_page_range1 = .from(0),
         .ul_code_page_range2 = .from(0),
         .sx_height = .from(0),
