@@ -1,9 +1,0 @@
-# Dev-only dependencies for the offline font oracle (test/font_oracle).
-# Not a runtime dependency of fidelitty itself.
-#   python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-#
-# Note: preview_font.py / compare.py also shell out to `sxiv` (system image
-# viewer) — install that via your package manager, it is not on PyPI.
-
-fonttools>=4.40
-Pillow>=10.0
