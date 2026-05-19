@@ -9,8 +9,8 @@ This library is compatible with `zig 0.16`. Currently only Linux is supported. A
 *Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
 <p align="center">
+  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster' by Jesper Ejsing">
   <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
-  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster'">
 </p>
 
 <p align="center">
@@ -137,11 +137,3 @@ Finally, we have an equation for the optimal $c_f,c_b$. To see how good it is, w
 Since the set of characters used for rendering is fixed, we precompute $F\cdot F,B\cdot B,F\cdot B,$ and $F\cdot F*B\cdot B - (F\cdot B)^2$, and bake them into the binary.
 
 The algorithm is entirely patch-local, so it is trivial to parallelize on the GPU. This library depends on Vulkan to handle compute shader dispatch, although I may switch over to a Zig-native solution, as there appear to be some good options providing more cross-platform support.
-
-### Data Sizing Conventions
-
-- Pixel color: ```u8```
-- Unicode codepoints: ```u32```
-- Patch-space / patch dimensions: ```u8```
-- Image-space: ```u16```
-
