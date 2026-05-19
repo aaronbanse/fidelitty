@@ -2,18 +2,15 @@
 
 ### A library for high performance rendering in the terminal using unicode characters and escape sequences
 
-This library uses Zig ```0.15.2```. Currently only Linux is supported. Available as a shared library with a C header.
+This library is compatible with `zig 0.16`. Currently only Linux is supported. Available as a shared library with a C header.
 
 *Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
 
 *Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
 <p align="center">
-  <img src="examples/assets/example-output.png" width="600" alt="Terminal render example">
-</p>
-
-<p align="center">
-  <img src="examples/assets/primeagen-high-res.png" width="600" alt="Carbonyl browser using fidelitty algo, watching youtube at 60 fps">
+  <img src="examples/assets/merfolk-trickster.jpg" width="500" alt="'Merfolk Trickster' by Jesper Ejsing">
+  <img src="examples/assets/merfolk-trickster-ftty.png" width="500" alt="Fidelitty's render of 'Merfolk Trickster'">
 </p>
 
 <p align="center">
@@ -31,6 +28,7 @@ This library uses Zig ```0.15.2```. Currently only Linux is supported. Available
 - Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
 - No way to attach to an existing Vulkan instance just yet, must create a standalone context and transfer data over the cpu.
 - The terminal frontend is experimental and buggy.
+- After generating the glyph set with `ftty init`, an already-open terminal will not pick it up — a running terminal caches its font set at startup. Run `fc-cache -f` and restart the terminal for the change to take effect.
 
 #### Installation and building
 Install Zig `0.15.2` and Vulkan, and ensure proper graphics drivers are installed.
