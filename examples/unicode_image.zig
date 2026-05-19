@@ -19,6 +19,7 @@ const PIXEL_STR_TEMPLATE: *const [42:0]u8 = "\x1b[48;2;000;000;000m\x1b[38;2;000
 const BEGIN_SYNC_SEQ = "\x1b[?2026h"; // begin synced output and reset cursor position
 const END_SYNC_SEQ = "\x1b[?2026l"; // end synced output
 const SET_CURSOR_SEQ_TEMPLATE = "\x1b[000;000H"; // fill in 0s to set cursor position. NOTE: 1-INDEXED!!
+const RESET_COLOR_SEQ = "\x1b[39;49m"; // reset fg/bg to terminal defaults so image colors don't bleed into later output
 
 pub const UnicodeImage = struct {
     x: u16,
@@ -119,6 +120,7 @@ pub const UnicodeImage = struct {
             const pixels_end = pixels_start + @as(usize, rw) * PIXEL_STR_TEMPLATE.len;
             _ = try stdout.writeStreamingAll(io, self.buf[pixels_start..pixels_end]);
         }
+        _ = try stdout.writeStreamingAll(io, RESET_COLOR_SEQ);
         _ = try stdout.writeStreamingAll(io, END_SYNC_SEQ);
     }
 
@@ -142,7 +144,8 @@ pub const UnicodeImage = struct {
     /// This consists of:
     /// 1. "begin sync" esc seq, telling terminal to print all out at once.
     /// 2. For each row, a "set cursor pos" esc seq and a set of escape sequence templates (colors/codepoint not set) for each colored unicode char.
-    /// 3. "end sync" esc seq, signalling end of synced output.
+    /// 3. fg/bg color reset esc seq, so the image's colors don't bleed into later output.
+    /// 4. "end sync" esc seq, signalling end of synced output.
     fn fillTemplate(self: *@This()) void {
         _=fmt.bufPrint(self.buf, BEGIN_SYNC_SEQ, .{}) catch {};
 
@@ -160,6 +163,9 @@ pub const UnicodeImage = struct {
             }
         }
 
+        // Reset fg/bg to terminal defaults so the image's colors don't bleed
+        // into later output, then signal the end of synced output.
+        _=fmt.bufPrint(self.buf[self.buf.len - END_SYNC_SEQ.len - RESET_COLOR_SEQ.len..], RESET_COLOR_SEQ, .{}) catch {};
         _=fmt.bufPrint(self.buf[self.buf.len - END_SYNC_SEQ.len..], END_SYNC_SEQ, .{}) catch {};
     }
 
@@ -177,7 +183,7 @@ pub const UnicodeImage = struct {
     }
 
     fn getSize(grid_w: u16, grid_h: u16) usize {
-        return @as(usize, BEGIN_SYNC_SEQ.len + END_SYNC_SEQ.len) + getRowSize(grid_w) * grid_h;
+        return @as(usize, BEGIN_SYNC_SEQ.len + RESET_COLOR_SEQ.len + END_SYNC_SEQ.len) + getRowSize(grid_w) * grid_h;
     }
 };
 
