@@ -13,6 +13,10 @@ This library is compatible with `zig 0.16`. Currently only Linux is supported. A
   <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster'">
 </p>
 
+<p align="center">
+Some of my favorite art from Jesper Ejsing, rendered in the terminal.
+</p>
+
 #### Features
 
 - Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
