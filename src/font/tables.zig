@@ -4,11 +4,13 @@ const config = @import("config");
 const common = @import("common.zig");
 const Big = common.Big;
 const fixed16_16 = common.fixed16_16;
+const bitmasks = common.bitmasks;
 const num_glyphs = common.num_glyphs;
+const total_glyphs = common.total_glyphs;
 const MAX_CONTOURS = common.MAX_CONTOURS;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
-const renderBitmap = @import("render_bitmap.zig").renderBitmap;
+const renderBitmask = @import("render_bitmap.zig").renderBitmask;
 
 // Table structs based on OpenType specification:
 // https://learn.microsoft.com/en-us/typography/opentype/spec/
@@ -102,7 +104,7 @@ pub const Cmap = extern struct {
 };
 
 pub const Glyf = extern struct {
-    buf: [num_glyphs * MAX_GLYPH_SIZE]u8,
+    buf: [total_glyphs * MAX_GLYPH_SIZE]u8,
     len: usize,
 };
 
@@ -155,13 +157,13 @@ pub const HorizontalMetric = extern struct {
 
 // hmtx table: one full horizontal metric per glyph.
 pub const Hmtx = extern struct {
-    metrics: [num_glyphs]HorizontalMetric,
+    metrics: [total_glyphs]HorizontalMetric,
 };
 
 // loca table, long format (head.index_to_loc_format = 1): a u32 offset into
 // glyf for each glyph, plus a trailing sentinel offset marking the end.
 pub const Loca = extern struct {
-    offsets: [num_glyphs + 1]Big(u32),
+    offsets: [total_glyphs + 1]Big(u32),
 };
 
 pub const Maxp = extern struct {
@@ -331,24 +333,27 @@ pub fn buildCmap() Cmap {
             .num_groups = .from(1),
             .start_char_code = .from(config.codepoint_start),
             .end_char_code = .from(codepoint_end),
-            .start_glyph_id = .from(0),
+            // Real glyphs start at ID 1; ID 0 is the reserved .notdef glyph.
+            .start_glyph_id = .from(1),
         },
     };
 }
 
 pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, descent: i16, rect_w: i16, rect_h: i16) void {
     glyf.len = 0;
-    for (0..num_glyphs) |glyph_id| {
+    // Glyph ID 0 is the reserved .notdef glyph, rendered as an empty outline
+    // (loca[0] == loca[1]). It is never selected by the shader; it exists only
+    // so real glyphs can start at ID 1, keeping cmap results non-zero.
+    loca.offsets[0] = Big(u32).from(0);
+    for (0..num_glyphs) |i| {
+        const glyph_id = i + 1;
         loca.offsets[glyph_id] = Big(u32).from(@intCast(glyf.len));
-        // Glyph index, dataset entry, and codepoint offset are the same value
-        // `g`; the bit pattern it renders is `g + 1`, since the degenerate
-        // empty pattern (0) is excluded from the set (see `UnicodeGlyphDataset`).
-        const size = renderBitmap(@intCast(glyph_id + 1), glyf.buf[glyf.len..], rect_w, rect_h, descent);
+        const size = renderBitmask(bitmasks[i], glyf.buf[glyf.len..], rect_w, rect_h, descent);
         glyf.len += @intCast(size);
     }
-    // Trailing sentinel: glyph i's data spans loca[i]..loca[i + 1], so a final
+    // Trailing sentinel: glyph g's data spans loca[g]..loca[g + 1], so a final
     // entry is needed to give the last glyph an end offset.
-    loca.offsets[num_glyphs] = Big(u32).from(@intCast(glyf.len));
+    loca.offsets[total_glyphs] = Big(u32).from(@intCast(glyf.len));
 }
 
 pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
@@ -393,7 +398,7 @@ pub fn buildHhea(metrics: UserFontMetrics, rect_w: i16) Hhea {
         .reserved3 = .from(0),
         .reserved4 = .from(0),
         .metric_data_format = .from(0),
-        .number_of_h_metrics = .from(@intCast(num_glyphs)),
+        .number_of_h_metrics = .from(@intCast(total_glyphs)),
     };
 }
 
@@ -403,14 +408,14 @@ pub fn buildHmtx(advance: u16) Hmtx {
         .lsb = .from(0),
     };
     return .{
-        .metrics = .{metric} ** num_glyphs,
+        .metrics = .{metric} ** total_glyphs,
     };
 }
 
 pub fn buildMaxp() Maxp {
     return .{
         .version = .from(fixed16_16(1, 0)),
-        .num_glyphs = .from(@intCast(num_glyphs)),
+        .num_glyphs = .from(@intCast(total_glyphs)),
         .max_points = .from(MAX_CONTOURS * 4),
         .max_contours = .from(MAX_CONTOURS),
         .max_composite_points = .from(0),

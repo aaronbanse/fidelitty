@@ -4,8 +4,15 @@ const vk = @import("vulkan");
 
 const gen_config = @import("gen_config");
 const config = @import("config");
+const cell_w = config.cell_w;
+const cell_h = config.cell_h;
 
+const bitmask_set = @import("bitmask_set.zig");
 const glyph = @import("glyph.zig");
+
+const bitmasks = bitmask_set.generate(cell_w, cell_h);
+const UnicodeGlyphDataset = glyph.UnicodeGlyphDataset(cell_w, cell_h, &bitmasks);
+const dataset: UnicodeGlyphDataset = .init();
 
 pub const PixelFormat = enum(u8) {
     rgb = 0, // 3 bytes/pixel, channel order: R G B
@@ -135,19 +142,7 @@ pub const Context = struct {
         try self.createCommandPool(compute_device_indices.queue_fam_index);
         try self.createDescriptorPool(max_pipelines);
         try self.createLayouts();
-
-        // load glyph dataset to gpu
-        const Dataset = glyph.UnicodeGlyphDataset(
-            config.cell_w,
-            config.cell_h,
-        );
-        var dataset: Dataset = .init();
-
-        try self.createGlyphSet(
-            config.cell_w,
-            config.cell_h,
-            &dataset,
-        );
+        try self.createGlyphSet();
     }
 
     pub fn deinit(self: *@This()) void {
@@ -480,26 +475,21 @@ pub const Context = struct {
         }, null);
     }
 
-    fn createGlyphSet(
-        self: *@This(),
-        comptime cell_w: u8,
-        comptime cell_h: u8,
-        glyph_set: *const glyph.UnicodeGlyphDataset(cell_w, cell_h),
-    ) !void {
-        self._num_codepoints = glyph.UnicodeGlyphDataset(cell_w, cell_h).numCodepoints();
+    fn createGlyphSet(self: *@This()) !void {
+        self._num_codepoints = UnicodeGlyphDataset.size();
 
         self._device_codepoint_buf = try self.allocateMemBuffer(
-            glyph_set.codepoints.len * @sizeOf(u32),
+            dataset.codepoints.len * @sizeOf(u32),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
         self._device_mask_buf = try self.allocateMemBuffer(
-            glyph_set.masks.len * @sizeOf(glyph.GlyphMask(cell_w, cell_h)),
+            dataset.masks.len * @sizeOf(glyph.GlyphMask(cell_w, cell_h)),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
         self._device_color_eqn_buf = try self.allocateMemBuffer(
-            glyph_set.color_eqns.len * @sizeOf(glyph.ColorEqnCache),
+            dataset.color_eqns.len * @sizeOf(glyph.ColorEqnCache),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
@@ -577,9 +567,9 @@ pub const Context = struct {
         const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints));
         const staging_ptr_eqns: [*]glyph.ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints));
 
-        @memcpy(staging_ptr_masks[0..self._num_codepoints], glyph_set.masks[0..self._num_codepoints]);
-        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], glyph_set.codepoints[0..self._num_codepoints]);
-        @memcpy(staging_ptr_eqns[0..self._num_codepoints], glyph_set.color_eqns[0..self._num_codepoints]);
+        @memcpy(staging_ptr_masks[0..self._num_codepoints], dataset.masks[0..self._num_codepoints]);
+        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], dataset.codepoints[0..self._num_codepoints]);
+        @memcpy(staging_ptr_eqns[0..self._num_codepoints], dataset.color_eqns[0..self._num_codepoints]);
 
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,

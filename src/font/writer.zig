@@ -9,7 +9,7 @@ const config = @import("config");
 const common = @import("common.zig");
 const Big = common.Big;
 const fixed16_16 = common.fixed16_16;
-const num_glyphs = common.num_glyphs;
+const total_glyphs = common.total_glyphs;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
 const cell_w = common.cell_w;
 const cell_h = common.cell_h;
@@ -110,7 +110,7 @@ pub fn generateFromMetrics(
     const max_output_size = comptime blk: {
         const ds = @sizeOf(OffsetTable) + tables.len * @sizeOf(TableRecord);
         break :blk ds + padTo4(@sizeOf(Os2)) + padTo4(@sizeOf(Cmap)) +
-            padTo4(num_glyphs * MAX_GLYPH_SIZE) + padTo4(@sizeOf(Head)) +
+            padTo4(total_glyphs * MAX_GLYPH_SIZE) + padTo4(@sizeOf(Head)) +
             padTo4(@sizeOf(Hhea)) + padTo4(@sizeOf(Hmtx)) +
             padTo4(@sizeOf(Loca)) + padTo4(@sizeOf(Maxp)) +
             padTo4(@sizeOf(Name)) + padTo4(@sizeOf(Post));

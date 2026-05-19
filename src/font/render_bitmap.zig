@@ -13,7 +13,7 @@ const Loca = @import("tables.zig").Loca;
 
 // TODO: refactor this
 /// Returns the number of bytes written.
-pub fn renderBitmap(mask: u32, out: []u8, rect_w: i16, rect_h: i16, descent: i16) usize {
+pub fn renderBitmask(mask: u32, out: []u8, rect_w: i16, rect_h: i16, descent: i16) usize {
     if (mask == 0) return 0;
 
     var rects: [MAX_CONTOURS]Rect = undefined;

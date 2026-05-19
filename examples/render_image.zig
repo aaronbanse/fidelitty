@@ -14,11 +14,9 @@ const c = @cImport({
 });
 
 pub fn main() !void {
-    // Config constants
     const im_patch_w = ftty.config.cell_w;
     const im_patch_h = ftty.config.cell_h;
 
-    // set this to your desired image path
     const IMAGE_PATH = "examples/assets/merfolk-trickster.jpg";
 
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
