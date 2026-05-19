@@ -9,12 +9,8 @@ This library is compatible with `zig 0.16`. Currently only Linux is supported. A
 *Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
 
 <p align="center">
-  <img src="examples/assets/merfolk-trickster.jpg" width="500" alt="'Merfolk Trickster' by Jesper Ejsing">
-  <img src="examples/assets/merfolk-trickster-ftty.png" width="500" alt="Fidelitty's render of 'Merfolk Trickster'">
-</p>
-
-<p align="center">
-  Watching the primeagen at 60fps using my fork of the carbonyl browser: <a href="https://github.com/aaronbanse/carbonyl-ftty">carbonyl-ftty</a>.
+  <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
+  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster'">
 </p>
 
 #### Features
