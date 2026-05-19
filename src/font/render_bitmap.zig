@@ -13,11 +13,11 @@ const Loca = @import("tables.zig").Loca;
 
 // TODO: refactor this
 /// Returns the number of bytes written.
-pub fn renderBitmap(mask: usize, out: []u8, rect_w: i16, rect_h: i16, ascent: i16) usize {
-    if (mask == 0) return 0; // .notdef: empty
+pub fn renderBitmap(mask: u32, out: []u8, rect_w: i16, rect_h: i16, descent: i16) usize {
+    if (mask == 0) return 0;
 
     var rects: [MAX_CONTOURS]Rect = undefined;
-    const n_rects = getGlyphRects(mask, &rects, rect_w, rect_h, ascent);
+    const n_rects = getGlyphRects(&rects, mask, rect_w, rect_h, descent);
     const n_points: u16 = @as(u16, n_rects) * 4;
 
     // Compute bounding box
@@ -161,7 +161,7 @@ const Rect = struct {
     y1: i16,
 };
 
-fn getGlyphRects(mask: usize, rects: *[MAX_CONTOURS]Rect, rect_w: i16, rect_h: i16, ascent: i16) u8 {
+fn getGlyphRects(rects: *[MAX_CONTOURS]Rect, mask: u32, rect_w: i16, rect_h: i16, descent: i16) u8 {
     var count: u8 = 0;
 
     for (0..(cell_w * cell_h)) |idx| {
@@ -169,7 +169,10 @@ fn getGlyphRects(mask: usize, rects: *[MAX_CONTOURS]Rect, rect_w: i16, rect_h: i
         const col: i16 = @intCast(idx % cell_w);
         const row: i16 = @intCast(idx / cell_w);
         const x0 = col * rect_w;
-        const y0 = ascent - (row + 1) * rect_h;
+        // The shader samples image patches y-down (row 0 = top), but TrueType
+        // glyf coordinates are y-up. Invert the row so row 0 lands at the top
+        // of the glyph, matching the patch orientation.
+        const y0 = (@as(i16, cell_h) - 1 - row) * rect_h + descent;
         rects[count] = .{
             .x0 = x0,
             .y0 = y0,

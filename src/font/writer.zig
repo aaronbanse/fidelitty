@@ -49,7 +49,7 @@ pub fn generateFromMetrics(
 
     // Dims of rectangles used to render bitmap
     const glyph_rect_w = @divFloor(metrics.advance_width, cell_w);
-    const glyph_rect_h = @divFloor(metrics.ascent + metrics.descent, cell_h);
+    const glyph_rect_h = @divFloor(metrics.ascent + (-metrics.descent), cell_h);
 
     const os2 = buildOs2(metrics);
     const cmap = buildCmap();
@@ -63,7 +63,7 @@ pub fn generateFromMetrics(
     buildGlyfLoca(
         glyf,
         loca,
-        metrics.ascent,
+        metrics.descent,
         @intCast(glyph_rect_w),
         @intCast(glyph_rect_h),
     );

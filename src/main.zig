@@ -1,7 +1,5 @@
 //! Generates a Fidelitty glyph-set OpenType font from a user-supplied font.
 
-// fc-match --format='%{file}\n'
-
 const std = @import("std");
 const ftty = @import("fidelitty");
 
@@ -12,18 +10,32 @@ fn cmdInit(
     user_home_dir: []const u8,
 ) !void {
     const root = std.Progress.start(io, .{ .root_name = "Init" });
-    defer root.end();
+    errdefer root.end();
 
     const user_font_path = args[2];
     const gen_node = root.start("Generate fidelitty rendering font", 1);
     try ftty.initFont(io, allocator, user_font_path, user_home_dir);
     gen_node.end();
+    root.end();
+
+    // A terminal caches its font set (and per-codepoint glyph lookups) at
+    // startup, so it won't pick up the freshly installed glyph set until
+    // fontconfig's cache is refreshed and the terminal is restarted.
+    var buf: [256]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &buf);
+    const stdout = &stdout_writer.interface;
+    try stdout.print(
+        "Font installed to ~/{s}/{s}\n" ++
+            "Run `fc-cache -f`, then restart your terminal for the new glyph set to take effect.\n",
+        .{ ftty.config.font_dir_from_home, ftty.config.font_name },
+    );
+    try stdout.flush();
 }
 
 // Purpose: not sure yet. Something like ffmpeg's interface.
 fn cmdCompute(io: std.Io, args: []const [:0]const u8) !void {
-    _=io;
-    _=args;
+    _ = io;
+    _ = args;
     return error.NotImplemented;
     // stub for now
 }

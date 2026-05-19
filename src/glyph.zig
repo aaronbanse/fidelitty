@@ -44,7 +44,14 @@ fn dot(dims: u8, a: []const f32, b: []const f32) f32 {
 
 pub fn UnicodeGlyphDataset(comptime cell_w: u8, comptime cell_h: u8) type {
     const MAX_GLYPHS = 65535; // limitation of opentype spec
-    const n: u32 = @min(1 << cell_w * cell_h, MAX_GLYPHS);
+    // Exclude the first and last bit patterns — the all-background and
+    // all-foreground cells. Both are degenerate in the color solver and
+    // would require special handling, and can be represented with any glyph
+    // with fg and bg set the same color.
+
+    // Dropping pattern 0 shifts the mapping to `entry i -> pattern i + 1`;
+    // dropping the full pattern is the `- 2` in the count.
+    const n: u32 = @min((1 << cell_w * cell_h) - 2, MAX_GLYPHS);
     return struct {
         codepoints: [n]u32,
         masks: [n]GlyphMask(cell_w, cell_h),
@@ -53,7 +60,7 @@ pub fn UnicodeGlyphDataset(comptime cell_w: u8, comptime cell_h: u8) type {
         pub fn init() @This() {
             var self: @This() = undefined;
             for (0..n) |i| {
-                const pattern = i + 1; // patterns 1..total-2, skipping 0 and total-1
+                const pattern = i + 1; // entry i maps to pattern i+1 (pattern 0 is excluded)
                 self.codepoints[i] = @as(u32, @intCast(i)) + codepoint_start;
                 for (0..(cell_w * cell_h)) |bit| {
                     const bit_on: bool = ((pattern >> @intCast(bit)) & 1 == 1);

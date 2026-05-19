@@ -3,9 +3,11 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     // Configuration
 
-    const CODEPOINT_START: u32 = 0xF5000;
+    // Fidelitty's glyphs occupy the Private Use Area of unicode codepoints.
+    // PUA-B starts at 0x100000, so we start at 0x105000 to avoid collisions.
+    const CODEPOINT_START: u32 = 0x105000;
 
-    const CELL_W = 4;
+    const CELL_W = 3;
     const CELL_H = 4;
 
     const FONT_DIR_FROM_HOME = ".local/share/fonts/fidelitty";

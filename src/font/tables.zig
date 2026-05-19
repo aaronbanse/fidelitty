@@ -336,11 +336,14 @@ pub fn buildCmap() Cmap {
     };
 }
 
-pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, ascent: i16, rect_w: i16, rect_h: i16) void {
+pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, descent: i16, rect_w: i16, rect_h: i16) void {
     glyf.len = 0;
-    for (0..num_glyphs) |mask| {
-        loca.offsets[mask] = Big(u32).from(@intCast(glyf.len));
-        const size = renderBitmap(@intCast(mask), glyf.buf[glyf.len..], rect_w, rect_h, ascent);
+    for (0..num_glyphs) |glyph_id| {
+        loca.offsets[glyph_id] = Big(u32).from(@intCast(glyf.len));
+        // Glyph index, dataset entry, and codepoint offset are the same value
+        // `g`; the bit pattern it renders is `g + 1`, since the degenerate
+        // empty pattern (0) is excluded from the set (see `UnicodeGlyphDataset`).
+        const size = renderBitmap(@intCast(glyph_id + 1), glyf.buf[glyf.len..], rect_w, rect_h, descent);
         glyf.len += @intCast(size);
     }
     // Trailing sentinel: glyph i's data spans loca[i]..loca[i + 1], so a final
