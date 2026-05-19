@@ -378,8 +378,8 @@ pub const Context = struct {
         // create device with features required by the Zig SPIR-V compute kernel
         const queue_priority: f32 = 1.0;
         var vk12_features: vk.PhysicalDeviceVulkan12Features = .{
+            .storage_buffer_8_bit_access = .true,
             .shader_int_8 = .true,
-            .buffer_device_address = .true,
         };
         const device_handle = try self._vki.createDevice(self._physical_device, &.{
             .p_next = @ptrCast(&vk12_features),
@@ -562,6 +562,7 @@ pub const Context = struct {
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
+        defer self.destroyMemBuffer(staging_buffer);
 
         const staging_mem_reqs = self._device.getBufferMemoryRequirements(staging_buffer.buf);
         const staging_ptr_raw: *anyopaque = try self._device.mapMemory(
@@ -910,6 +911,9 @@ pub const Context = struct {
             .code_size = shader_code.len,
             .p_code = @ptrCast(@alignCast(shader_code.ptr)),
         }, null);
+        // The compute pipeline retains everything it needs from the module, so
+        // the module can be destroyed as soon as pipeline creation returns.
+        defer self._device.destroyShaderModule(shader_module, null);
 
         var pipelines: [1]vk.Pipeline = undefined;
         _ = try self._device.createComputePipelines(
