@@ -98,7 +98,7 @@ pub fn build(b: *std.Build) void {
     // Build main executable
 
     const main_exe = b.addExecutable(.{
-        .name = "ftty",
+        .name = "ftty-init",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .imports = &.{ .{ .name = "fidelitty", .module = root_module } },
