@@ -6,7 +6,6 @@ const mem = std.mem;
 
 const ftty = @import("fidelitty");
 
-// Experimental terminal frontend — kept in examples/ rather than the library.
 const terminal = @import("terminal_util.zig");
 const UnicodeImage = @import("unicode_image.zig").UnicodeImage;
 
@@ -20,7 +19,7 @@ pub fn main() !void {
     const im_patch_h = ftty.config.cell_h;
 
     // set this to your desired image path
-    const IMAGE_PATH = "examples/assets/kitty.jpg";
+    const IMAGE_PATH = "examples/assets/merfolk-trickster.jpg";
 
     var debug_allocator: heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
