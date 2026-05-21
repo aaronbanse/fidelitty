@@ -17,7 +17,7 @@ fn cmdInit(
     // startup, so it won't pick up the freshly installed glyph set until
     // fontconfig's cache is refreshed and the terminal is restarted.
     var buf: [256]u8 = undefined;
-    var stderr_writer = std.Io.File.stdout().writer(io, &buf);
+    var stderr_writer = std.Io.File.stderr().writer(io, &buf);
     const stderr = &stderr_writer.interface;
     try stderr.print(
         "Font installed to {s}\n" ++
