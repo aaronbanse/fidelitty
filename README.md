@@ -1,12 +1,11 @@
 # Fidelitty
 
-### A library for high performance rendering in the terminal using unicode characters and escape sequences
+### A library for renderieng images in the terminal
 
-This library is compatible with `zig 0.16`. Currently only Linux is supported. Available as a shared library with a C header.
-
-*Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
-
-*Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
+- Compatible with all modern terminals
+- Functions over ssh, doubling as a form of image compression enabling video to be transmit in realtime
+- Runs comfortably at > 60fps
+- Available as a Zig library or shared object with C header
 
 <p align="center">
   <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster' by Jesper Ejsing">
@@ -14,24 +13,14 @@ This library is compatible with `zig 0.16`. Currently only Linux is supported. A
 </p>
 
 <p align="center">
-Some of my favorite art from Jesper Ejsing, rendered in the terminal.
+Some of my favorite art from Jesper Ejsing, rendered with fidelitty.
 </p>
 
-#### Features
+#### Dependencies
 
-- Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
-- 60 fps (works on my machine)
-- Customize algorithm features, like the subset of unicode characters to use, at build time. The dataset will be computed and baked into the binary for performance.
+Vulkan and fontconfig are the only dependencies. Zig `0.16` is needed to build from source.
 
-#### Limitations
-
-- Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
-- No way to attach to an existing Vulkan instance just yet, must create a standalone context and transfer data over the cpu.
-- The terminal frontend is experimental and buggy.
-- After generating the glyph set with `ftty init`, an already-open terminal will not pick it up — a running terminal caches its font set at startup. Run `fc-cache -f` and restart the terminal for the change to take effect.
-
-#### Installation and building
-Install Zig `0.15.2` and Vulkan, and ensure proper graphics drivers are installed.
+#### Building from source
 
 Clone the repo:
 ```bash
@@ -39,34 +28,23 @@ git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
 
-Set your terminal font in `build.zig` (search for `FONT_PATH`), then generate the glyph dataset and build:
+To build and run the example:
 ```bash
-zig build gen-dataset && zig build
+zig build example
 ```
 
-Run the example: *note: the example depends on stb_image, which is not safe for use on untrusted images. Use at your own risk until this is addressed.*
+Build and install:
 ```bash
-zig build run-img-ex
+zig build -Doptimize=ReleaseSmall --prefix /usr/local
+# -Doptimize=ReleaseFast is also an option, but the binary will be ~10x larger.
+# Furthermore, most of the latency is on the gpu, where that build setting does not help.
 ```
 
-To use as a Zig library, add fidelitty as a dependency in your `build.zig.zon`, or have Zig fetch it automatically:
+To use as a Zig library:
 ```bash
 # in project root
 zig fetch --save https://github.com/aaronbanse/fidelitty.git
 ```
-
-To build as a `.so` file and install `libfidelitty.so` and `fidelitty.h` to `/usr/local`:
-```bash
-zig build -Dbuild-mode=shared_lib --prefix /usr/local
-```
-
-And, in your `build.zig`, link the Vulkan library to your executable:
-```zig
-exe.linkSystemLibrary("vulkan");
-```
-
-
-It is not necessary to link libc in this way, as Zig supports transitive libc linking through included modules.
 
 #### Algorithm overview
 
@@ -131,9 +109,3 @@ P\cdot B = c_fF\cdot B + c_bB\cdot B
 ```
 
 Finally, we have an equation for the optimal $c_f,c_b$. To see how good it is, we plug these values into the first equation for D. Now that we have this metric, finding the optimal unicode pixel is as simple as looping through the full list of characters, computing this value for each channel, and picking the character-color combo with the lowest $D$.
-
-##### Performance Optimizations
-
-Since the set of characters used for rendering is fixed, we precompute $F\cdot F,B\cdot B,F\cdot B,$ and $F\cdot F*B\cdot B - (F\cdot B)^2$, and bake them into the binary.
-
-The algorithm is entirely patch-local, so it is trivial to parallelize on the GPU. This library depends on Vulkan to handle compute shader dispatch, although I may switch over to a Zig-native solution, as there appear to be some good options providing more cross-platform support.
