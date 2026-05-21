@@ -33,7 +33,7 @@ To build and run the example:
 zig build example
 ```
 
-Build and install:
+To build and install:
 ```bash
 zig build -Doptimize=ReleaseSmall --prefix /usr/local
 # -Doptimize=ReleaseFast is also an option, but the binary will be ~10x larger.
