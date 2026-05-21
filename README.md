@@ -45,6 +45,16 @@ To use as a Zig library:
 # in project root
 zig fetch --save https://github.com/aaronbanse/fidelitty.git
 ```
+#### Setup
+
+Fidelitty uses a custom bitmask font for rendering which must match the terminal cell dims exactly. The dimensions of the terminal cell are determined by the user's default font. To generate the font, run:
+
+```bash
+ftty-init <path_to_user_font>
+fc-cache -f
+```
+
+Terminals cache available fonts on startup, so you must restart your terminal for the changes to be detected.
 
 #### Algorithm overview
 
