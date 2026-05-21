@@ -1,4 +1,10 @@
+#pragma once
+
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef struct ftty_context_t ftty_context_t;
 
@@ -68,3 +74,7 @@ ftty_unicode_pixel_t* ftty_pipeline_get_output_surface(ftty_pipeline_t* handle);
 uint8_t ftty_get_cell_width(void);
 
 uint8_t ftty_get_cell_height(void);
+
+#ifdef __cplusplus
+}
+#endif
