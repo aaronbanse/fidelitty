@@ -6,7 +6,6 @@
 const std = @import("std");
 
 const ftty = @import("fidelitty");
-const config = ftty.config;
 const UnicodePixelData = ftty.UnicodePixelData;
 const ComputeContext = ftty.ComputeContext;
 const PipelineHandle = ftty.PipelineHandle;
@@ -19,14 +18,13 @@ const c_io = Threaded.io();
 
 // FONT GENERATION
 
-export fn ftty_init_font(user_font_path: [*]const u8) callconv(.c) i32 {
-    _=user_font_path;
-    return 0;
-    // font_.generate(c_io, user_font_path) catch {
-    //     return 1;
-    // };
-    // return 0;
-}
+// TODO: figure out how to get environ map without main's Init.
+// export fn ftty_init_font(user_font_path: [*]const u8) callconv(.c) i32 {
+//     ftty.initFont(c_io, c_allocator, user_font_path) catch {
+//         return -1;
+//     };
+//     return 0;
+// }
 
 // CONTEXT MANAGEMENT
 
@@ -126,9 +124,9 @@ export fn ftty_pipeline_get_output_surface(pipeline: *PipelineHandle) callconv(.
 // DATASET CONFIG
 
 export fn ftty_get_cell_width() callconv(.c) u8 {
-    return config.cell_w;
+    return ftty.cell_w;
 }
 
 export fn ftty_get_cell_height() callconv(.c) u8 {
-    return config.cell_h;
+    return ftty.cell_h;
 }

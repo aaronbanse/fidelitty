@@ -14,8 +14,8 @@ const c = @cImport({
 });
 
 pub fn main() !void {
-    const im_patch_w = ftty.config.cell_w;
-    const im_patch_h = ftty.config.cell_h;
+    const im_patch_w = ftty.cell_w;
+    const im_patch_h = ftty.cell_h;
 
     const IMAGE_PATH = "examples/assets/merfolk-trickster.jpg";
 

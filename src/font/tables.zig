@@ -1,16 +1,20 @@
 //! OpenType table struct definitions and their builders.
 
-const config = @import("config");
 const common = @import("common.zig");
 const Big = common.Big;
 const fixed16_16 = common.fixed16_16;
-const bitmasks = common.bitmasks;
-const num_glyphs = common.num_glyphs;
-const total_glyphs = common.total_glyphs;
 const MAX_CONTOURS = common.MAX_CONTOURS;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
 const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
-const renderBitmask = @import("render_bitmap.zig").renderBitmask;
+const renderBitmask = @import("render_bitmask.zig").renderBitmask;
+const dataset = @import("../dataset.zig");
+const bitmasks = dataset.bitmasks;
+const num_glyphs = dataset.num_glyphs;
+const codepoint_start = dataset.codepoint_start;
+const codepoint_end = dataset.codepoint_end;
+
+// must include .notdef by OpenType spec
+pub const num_glyphs_incl_notdef = num_glyphs + 1;
 
 // Table structs based on OpenType specification:
 // https://learn.microsoft.com/en-us/typography/opentype/spec/
@@ -104,7 +108,7 @@ pub const Cmap = extern struct {
 };
 
 pub const Glyf = extern struct {
-    buf: [total_glyphs * MAX_GLYPH_SIZE]u8,
+    buf: [num_glyphs_incl_notdef * MAX_GLYPH_SIZE]u8,
     len: usize,
 };
 
@@ -157,13 +161,13 @@ pub const HorizontalMetric = extern struct {
 
 // hmtx table: one full horizontal metric per glyph.
 pub const Hmtx = extern struct {
-    metrics: [total_glyphs]HorizontalMetric,
+    metrics: [num_glyphs_incl_notdef]HorizontalMetric,
 };
 
 // loca table, long format (head.index_to_loc_format = 1): a u32 offset into
 // glyf for each glyph, plus a trailing sentinel offset marking the end.
 pub const Loca = extern struct {
-    offsets: [total_glyphs + 1]Big(u32),
+    offsets: [num_glyphs_incl_notdef + 1]Big(u32),
 };
 
 pub const Maxp = extern struct {
@@ -290,7 +294,6 @@ pub fn buildOs2(metrics: UserFontMetrics) Os2 {
 }
 
 pub fn buildCmap() Cmap {
-    const codepoint_end = config.codepoint_start + num_glyphs - 1;
     return .{
         .version = .from(0),
         .num_tables = .from(3),
@@ -331,7 +334,7 @@ pub fn buildCmap() Cmap {
             .length = .from(@sizeOf(CmapFormat12)),
             .language = .from(0),
             .num_groups = .from(1),
-            .start_char_code = .from(config.codepoint_start),
+            .start_char_code = .from(codepoint_start),
             .end_char_code = .from(codepoint_end),
             // Real glyphs start at ID 1; ID 0 is the reserved .notdef glyph.
             .start_glyph_id = .from(1),
@@ -339,7 +342,13 @@ pub fn buildCmap() Cmap {
     };
 }
 
-pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, descent: i16, rect_w: i16, rect_h: i16) void {
+pub fn buildGlyfLoca(
+    glyf: *Glyf,
+    loca: *Loca,
+    descent: i16,
+    rect_w: i16,
+    rect_h: i16,
+) void {
     glyf.len = 0;
     // Glyph ID 0 is the reserved .notdef glyph, rendered as an empty outline
     // (loca[0] == loca[1]). It is never selected by the shader; it exists only
@@ -353,7 +362,7 @@ pub fn buildGlyfLoca(glyf: *Glyf, loca: *Loca, descent: i16, rect_w: i16, rect_h
     }
     // Trailing sentinel: glyph g's data spans loca[g]..loca[g + 1], so a final
     // entry is needed to give the last glyph an end offset.
-    loca.offsets[total_glyphs] = Big(u32).from(@intCast(glyf.len));
+    loca.offsets[num_glyphs_incl_notdef] = Big(u32).from(@intCast(glyf.len));
 }
 
 pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
@@ -398,7 +407,7 @@ pub fn buildHhea(metrics: UserFontMetrics, rect_w: i16) Hhea {
         .reserved3 = .from(0),
         .reserved4 = .from(0),
         .metric_data_format = .from(0),
-        .number_of_h_metrics = .from(@intCast(total_glyphs)),
+        .number_of_h_metrics = .from(@intCast(num_glyphs_incl_notdef)),
     };
 }
 
@@ -408,14 +417,14 @@ pub fn buildHmtx(advance: u16) Hmtx {
         .lsb = .from(0),
     };
     return .{
-        .metrics = .{metric} ** total_glyphs,
+        .metrics = .{metric} ** num_glyphs_incl_notdef,
     };
 }
 
 pub fn buildMaxp() Maxp {
     return .{
         .version = .from(fixed16_16(1, 0)),
-        .num_glyphs = .from(@intCast(total_glyphs)),
+        .num_glyphs = .from(@intCast(num_glyphs_incl_notdef)),
         .max_points = .from(MAX_CONTOURS * 4),
         .max_contours = .from(MAX_CONTOURS),
         .max_composite_points = .from(0),

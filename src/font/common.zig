@@ -1,24 +1,7 @@
 //! Shared constants and low-level helpers for font generation.
 
 const std = @import("std");
-const config = @import("config");
-const glyph = @import("../glyph.zig");
-const bitmask_set = @import("../bitmask_set.zig");
 
-pub const cell_w = config.cell_w;
-pub const cell_h = config.cell_h;
-
-pub const bitmasks = bitmask_set.generate(cell_w, cell_h);
-
-/// Number of real glyphs (one per bitmask).
-pub const num_glyphs = bitmasks.len;
-/// Total glyphs written to the font: real glyphs plus the reserved `.notdef`
-/// glyph at ID 0. OpenType mandates glyph ID 0 be `.notdef`; a cmap lookup
-/// returning 0 means "no glyph", which renders as tofu — so real glyphs must
-/// start at ID 1.
-pub const total_glyphs = num_glyphs + 1;
-
-// TODO: figure out more informed values for these, and where they should live.
 pub const MAX_CONTOURS = 36;
 pub const MAX_GLYPH_SIZE = 1024;
 

@@ -4,17 +4,22 @@ const std = @import("std");
 const mem = std.mem;
 const math = std.math;
 const Io = std.Io;
-const config = @import("config");
 
 const common = @import("common.zig");
 const Big = common.Big;
 const fixed16_16 = common.fixed16_16;
-const total_glyphs = common.total_glyphs;
 const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
-const cell_w = common.cell_w;
-const cell_h = common.cell_h;
+
+const dataset = @import("../dataset.zig");
+const cell_w = dataset.cell_w;
+const cell_h = dataset.cell_h;
+
+const font_config = @import("font_config");
+const font_dir_from_home = font_config.font_dir_from_home;
+const font_name = font_config.font_name;
 
 const tables_mod = @import("tables.zig");
+const num_glyphs_incl_notdef = tables_mod.num_glyphs_incl_notdef;
 const Os2 = tables_mod.Os2;
 const Cmap = tables_mod.Cmap;
 const Glyf = tables_mod.Glyf;
@@ -43,10 +48,7 @@ pub fn generateFromMetrics(
     allocator: mem.Allocator,
     metrics: UserFontMetrics,
     user_home_dir: []const u8,
-) !void {
-    // MAJOR TODO: depend on glyph.zig for all of our dataset generation,
-    // Derive bit ordering and everything from that file. one source of truth
-
+) ![]const u8 {
     // Dims of rectangles used to render bitmap
     const glyph_rect_w = @divFloor(metrics.advance_width, cell_w);
     const glyph_rect_h = @divFloor(metrics.ascent + (-metrics.descent), cell_h);
@@ -110,7 +112,7 @@ pub fn generateFromMetrics(
     const max_output_size = comptime blk: {
         const ds = @sizeOf(OffsetTable) + tables.len * @sizeOf(TableRecord);
         break :blk ds + padTo4(@sizeOf(Os2)) + padTo4(@sizeOf(Cmap)) +
-            padTo4(total_glyphs * MAX_GLYPH_SIZE) + padTo4(@sizeOf(Head)) +
+            padTo4(num_glyphs_incl_notdef * MAX_GLYPH_SIZE) + padTo4(@sizeOf(Head)) +
             padTo4(@sizeOf(Hhea)) + padTo4(@sizeOf(Hmtx)) +
             padTo4(@sizeOf(Loca)) + padTo4(@sizeOf(Maxp)) +
             padTo4(@sizeOf(Name)) + padTo4(@sizeOf(Post));
@@ -159,9 +161,16 @@ pub fn generateFromMetrics(
     Big(u32).from(0xB1B0AFBA -% whole_checksum).write(out[head_data_offset + @offsetOf(Head, "checksum_adjustment") ..]);
 
     const home = try Io.Dir.cwd().openDir(io, user_home_dir, .{});
-    const font_dir = try home.createDirPathOpen(io, config.font_dir_from_home, .{});
-    const font_file = try font_dir.createFile(io, config.font_name, .{});
+    const font_dir = try home.createDirPathOpen(io, font_dir_from_home, .{});
+    const font_file = try font_dir.createFile(io, font_name, .{});
     try font_file.writePositionalAll(io, out[0..total_size], 0);
+
+    // TODO: does std expose a more elegant way to do this?
+    var installed_path_buf: [256]u8 = undefined;
+    const intalled_path_size = try font_file.realPath(io, &installed_path_buf);
+    const installed_path: []u8 = try allocator.alloc(u8, intalled_path_size);
+    @memcpy(installed_path, installed_path_buf[0..intalled_path_size]);
+    return installed_path;
 }
 
 fn padTo4(comptime n: usize) usize {

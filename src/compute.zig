@@ -1,18 +1,13 @@
 const std = @import("std");
-
 const vk = @import("vulkan");
+const dataset = @import("dataset.zig");
 
-const gen_config = @import("gen_config");
-const config = @import("config");
-const cell_w = config.cell_w;
-const cell_h = config.cell_h;
-
-const bitmask_set = @import("bitmask_set.zig");
-const glyph = @import("glyph.zig");
-
-const bitmasks = bitmask_set.generate(cell_w, cell_h);
-const UnicodeGlyphDataset = glyph.UnicodeGlyphDataset(cell_w, cell_h, &bitmasks);
-const dataset: UnicodeGlyphDataset = .init();
+const bitmasks = dataset.bitmasks;
+const GlyphMask = dataset.GlyphMask;
+const ColorEqnCache = dataset.ColorEqnCache;
+const cell_w = dataset.cell_w;
+const cell_h = dataset.cell_h;
+const num_glyphs = dataset.num_glyphs;
 
 pub const PixelFormat = enum(u8) {
     rgb = 0, // 3 bytes/pixel, channel order: R G B
@@ -109,10 +104,6 @@ pub const Context = struct {
     _device_codepoint_buf: MemBuffer,
     _device_mask_buf: MemBuffer,
     _device_color_eqn_buf: MemBuffer,
-    _num_codepoints: u32,
-
-    _cell_w: u8,
-    _cell_h: u8,
 
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
 
@@ -133,8 +124,6 @@ pub const Context = struct {
     pub fn init(self: *@This(), allocator: std.mem.Allocator, max_pipelines: u8) !void {
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
-        self._cell_w = config.cell_w;
-        self._cell_h = config.cell_h;
         self.loadBase();
         try self.createInstance();
         const compute_device_indices = try self.createDevice();
@@ -179,7 +168,7 @@ pub const Context = struct {
         grid_w: u16,
         grid_h: u16,
     ) !PipelineHandle {
-        return self.createRenderPipelineEx(grid_w, grid_h, .rgb, self._cell_w, self._cell_h);
+        return self.createRenderPipelineEx(grid_w, grid_h, .rgb, cell_w, cell_h);
     }
 
     pub fn createRenderPipelineEx(
@@ -476,20 +465,18 @@ pub const Context = struct {
     }
 
     fn createGlyphSet(self: *@This()) !void {
-        self._num_codepoints = UnicodeGlyphDataset.size();
-
         self._device_codepoint_buf = try self.allocateMemBuffer(
-            dataset.codepoints.len * @sizeOf(u32),
+            num_glyphs * @sizeOf(u32),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
         self._device_mask_buf = try self.allocateMemBuffer(
-            dataset.masks.len * @sizeOf(glyph.GlyphMask(cell_w, cell_h)),
+            num_glyphs * @sizeOf(GlyphMask),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
         self._device_color_eqn_buf = try self.allocateMemBuffer(
-            dataset.color_eqns.len * @sizeOf(glyph.ColorEqnCache),
+            num_glyphs * @sizeOf(ColorEqnCache),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
@@ -548,7 +535,7 @@ pub const Context = struct {
         // Coalesce all 3 buffers in the dataset into one staging buffer and push to the gpu
 
         const staging_buffer = try self.allocateMemBuffer(
-            self._num_codepoints * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(cell_w, cell_h)) + @sizeOf(glyph.ColorEqnCache)),
+            num_glyphs * (@sizeOf(u32) + @sizeOf(GlyphMask) + @sizeOf(ColorEqnCache)),
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
@@ -563,13 +550,13 @@ pub const Context = struct {
         ) orelse return error.MapMemoryFailed;
 
         // NOTE: staging ptr masks is placed first, since it has very strict alignment requirements.
-        const staging_ptr_masks: [*]glyph.GlyphMask(cell_w, cell_h) = @ptrCast(@alignCast(staging_ptr_raw));
-        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints));
-        const staging_ptr_eqns: [*]glyph.ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints));
+        const staging_ptr_masks: [*]GlyphMask = @ptrCast(@alignCast(staging_ptr_raw));
+        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + num_glyphs));
+        const staging_ptr_eqns: [*]ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + num_glyphs));
 
-        @memcpy(staging_ptr_masks[0..self._num_codepoints], dataset.masks[0..self._num_codepoints]);
-        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], dataset.codepoints[0..self._num_codepoints]);
-        @memcpy(staging_ptr_eqns[0..self._num_codepoints], dataset.color_eqns[0..self._num_codepoints]);
+        @memcpy(staging_ptr_masks[0..num_glyphs], dataset.masks[0..num_glyphs]);
+        @memcpy(staging_ptr_codepoints[0..num_glyphs], dataset.codepoints[0..num_glyphs]);
+        @memcpy(staging_ptr_eqns[0..num_glyphs], dataset.color_eqns[0..num_glyphs]);
 
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
@@ -758,7 +745,7 @@ pub const Context = struct {
     }
 
     const PushConstants = extern struct {
-        num_codepoints: u32,
+        num_glyphs: u32,
         grid_w: u32,
         dispatch_x: u32,
         dispatch_y: u32,
@@ -830,7 +817,7 @@ pub const Context = struct {
 
         // upload uniforms as push constants
         const push = PushConstants{
-            .num_codepoints = self._num_codepoints,
+            .num_glyphs = num_glyphs,
             .grid_w = handle.grid_w,
             .dispatch_x = dispatch_x,
             .dispatch_y = dispatch_y,
@@ -841,8 +828,8 @@ pub const Context = struct {
             .swizzle = handle.pixel_format.swizzle(),
             .im_patch_w = handle.im_patch_w,
             .im_patch_h = handle.im_patch_h,
-            .cell_w = self._cell_w,
-            .cell_h = self._cell_h,
+            .cell_w = cell_w,
+            .cell_h = cell_h,
         };
 
         self._device.cmdPushConstants(

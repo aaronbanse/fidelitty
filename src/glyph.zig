@@ -1,9 +1,9 @@
+//! Types passed to gpu for computing optimal glyph to represent a patch
+
 const std = @import("std");
 const math = std.math;
 const debug = std.debug;
 const Io = std.Io;
-
-const codepoint_start = @import("config").codepoint_start;
 
 /// Stores a vector mask of vals in [0,1] of the positive and negative space of a glyph.
 pub fn GlyphMask(comptime cell_w: u8, comptime cell_h: u8) type {
@@ -56,6 +56,7 @@ pub fn UnicodeGlyphDataset(
     comptime cell_w: u8,
     comptime cell_h: u8,
     comptime bitmasks: []const u32,
+    comptime codepoint_start: u32,
 ) type {
     const type_name = "UnicodeGlyphDataset";
     const MAX_GLYPHS = 65535;
@@ -98,10 +99,6 @@ pub fn UnicodeGlyphDataset(
                 self.color_eqns[i] = ColorEqnCache.compute(cell_w, cell_h, self.masks[i]);
             }
             return self;
-        }
-
-        pub fn size() u32 {
-            return n_glyphs;
         }
     };
 }

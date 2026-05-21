@@ -3,22 +3,24 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     // Configuration
 
+    const CELL_W = 3;
+    const CELL_H = 4;
+
     // Fidelitty's glyphs occupy the Private Use Area of unicode codepoints.
     // PUA-B starts at 0x100000, so we start at 0x105000 to avoid collisions.
     const CODEPOINT_START: u32 = 0x105000;
 
-    const CELL_W = 3;
-    const CELL_H = 4;
+    const dataset_config = b.addOptions();
+    dataset_config.addOption(u8, "cell_w", CELL_W);
+    dataset_config.addOption(u8, "cell_h", CELL_H);
+    dataset_config.addOption(u32, "codepoint_start", CODEPOINT_START);
 
     const FONT_DIR_FROM_HOME = ".local/share/fonts/fidelitty";
     const FONT_NAME = "fidelitty.ttf";
 
-    const config = b.addOptions();
-    config.addOption(u8, "cell_w", CELL_W);
-    config.addOption(u8, "cell_h", CELL_H);
-    config.addOption(u32, "codepoint_start", CODEPOINT_START);
-    config.addOption([]const u8, "font_dir_from_home", FONT_DIR_FROM_HOME);
-    config.addOption([]const u8, "font_name", FONT_NAME);
+    const font_config = b.addOptions();
+    font_config.addOption([]const u8, "font_dir_from_home", FONT_DIR_FROM_HOME);
+    font_config.addOption([]const u8, "font_name", FONT_NAME);
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -54,15 +56,16 @@ pub fn build(b: *std.Build) void {
             "--target-env=vulkan1.4",
             "-o",
         });
-        const spv = shader_cmd.addOutputFileArg("shaders/out/compute_pixel.spv");
-        shader_cmd.addFileArg(b.path("shaders/compute_pixel.glsl"));
+        const spv = shader_cmd.addOutputFileArg("src/shaders/out/compute_pixel.spv");
+        shader_cmd.addFileArg(b.path("src/shaders/compute_pixel.glsl"));
         break :blk spv;
     };
 
     const root_module = b.addModule("fidelitty", .{
         .root_source_file = b.path("src/lib.zig"),
         .imports = &.{
-            .{ .name = "config", .module = config.createModule() },
+            .{ .name = "dataset_config", .module = dataset_config.createModule() },
+            .{ .name = "font_config", .module = font_config.createModule() },
             .{ .name = "c", .module = c.createModule() },
             .{ .name = "vulkan", .module = vulkan.module("vulkan-zig") },
             .{

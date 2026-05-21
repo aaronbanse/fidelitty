@@ -7,10 +7,11 @@ fn cmdInit(
     io: std.Io,
     allocator: std.mem.Allocator,
     args: []const [:0]const u8,
-    user_home_dir: []const u8,
+    user_home_dir_path: []const u8,
 ) !void {
     const user_font_path = args[1];
-    try ftty.initFont(io, allocator, user_font_path, user_home_dir);
+    const installed_path = try ftty.initFont(io, allocator, user_font_path, user_home_dir_path);
+    defer allocator.free(installed_path);
 
     // A terminal caches its font set (and per-codepoint glyph lookups) at
     // startup, so it won't pick up the freshly installed glyph set until
@@ -19,9 +20,9 @@ fn cmdInit(
     var stderr_writer = std.Io.File.stdout().writer(io, &buf);
     const stderr = &stderr_writer.interface;
     try stderr.print(
-        "Font installed to ~/{s}/{s}\n" ++
+        "Font installed to {s}\n" ++
             "Run `fc-cache -f` then restart your terminal for the font to be discovered.\n",
-        .{ ftty.config.font_dir_from_home, ftty.config.font_name },
+        .{installed_path},
     );
     try stderr.flush();
 }

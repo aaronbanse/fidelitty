@@ -4,12 +4,13 @@ const std = @import("std");
 const math = std.math;
 const common = @import("common.zig");
 const Big = common.Big;
-const cell_w = common.cell_w;
-const cell_h = common.cell_h;
 const num_glyphs = common.num_glyphs;
 const MAX_CONTOURS = common.MAX_CONTOURS;
 const Glyf = @import("tables.zig").Glyf;
 const Loca = @import("tables.zig").Loca;
+const dataset = @import("../dataset.zig");
+const cell_w = dataset.cell_w;
+const cell_h = dataset.cell_h;
 
 // TODO: refactor this
 /// Returns the number of bytes written.
