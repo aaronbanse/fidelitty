@@ -1,10 +1,10 @@
 # Fidelitty
 
-### A library for renderieng images in the terminal
+### A library for rendering images in the terminal
 
-- Compatible with all modern terminals
 - Functions over ssh, doubling as a form of image compression enabling video to be transmit in realtime
 - Runs comfortably at > 60fps
+- Compatible with all modern terminals supporting truecolor, font fallbacks, and escape sequences for coloring the foreground and background
 - Available as a Zig library or shared object with C header
 
 <p align="center">
@@ -28,7 +28,7 @@ git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
 
-To build and run the example:
+To build and run the example (after completing setup, see below):
 ```bash
 zig build example
 ```
