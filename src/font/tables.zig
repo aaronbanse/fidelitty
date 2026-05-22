@@ -1,20 +1,20 @@
 //! OpenType table struct definitions and their builders.
 
+const std = @import("std");
 const common = @import("common.zig");
 const Big = common.Big;
 const fixed16_16 = common.fixed16_16;
-const MAX_CONTOURS = common.MAX_CONTOURS;
-const MAX_GLYPH_SIZE = common.MAX_GLYPH_SIZE;
-const UserFontMetrics = @import("metrics.zig").UserFontMetrics;
-const renderBitmask = @import("render_bitmask.zig").renderBitmask;
+const FontMetrics = @import("metrics.zig").FontMetrics;
 const dataset = @import("../dataset.zig");
 const bitmasks = dataset.bitmasks;
 const num_glyphs = dataset.num_glyphs;
+const cell_w = dataset.cell_w;
+const cell_h = dataset.cell_h;
 const codepoint_start = dataset.codepoint_start;
 const codepoint_end = dataset.codepoint_end;
-
-// must include .notdef by OpenType spec
-pub const num_glyphs_incl_notdef = num_glyphs + 1;
+const notdef_glyph_id = dataset.notdef_glyph_id;
+const first_real_glyph_id = dataset.first_real_glyph_id;
+const num_glyphs_incl_notdef = num_glyphs + first_real_glyph_id;
 
 // Table structs based on OpenType specification:
 // https://learn.microsoft.com/en-us/typography/opentype/spec/
@@ -107,9 +107,211 @@ pub const Cmap = extern struct {
     format12: CmapFormat12,
 };
 
-pub const Glyf = extern struct {
-    buf: [num_glyphs_incl_notdef * MAX_GLYPH_SIZE]u8,
-    len: usize,
+// Fixed 10-byte header at the start of every simple glyph entry.
+pub const GlyfHeader = extern struct {
+    n_contours: Big(i16),
+    x_min: Big(i16),
+    y_min: Big(i16),
+    x_max: Big(i16),
+    y_max: Big(i16),
+};
+
+// TrueType simple glyph flag byte. The "same" bits double as the sign bit
+// when the corresponding "short" bit is set.
+pub const SimpleGlyphFlag = packed struct(u8) {
+    on_curve: bool,
+    x_short: bool,
+    y_short: bool,
+    repeat: bool,
+    x_same_or_positive: bool,
+    y_same_or_positive: bool,
+    overlap: bool,
+    reserved: bool,
+};
+
+const Rect = struct {
+    x0: i16,
+    y0: i16,
+    x1: i16,
+    y1: i16,
+};
+
+// A single glyph entry in `glyf`. Build one with `fromRects`; the write*
+// methods append to `buf` in on-disk order.
+pub const GlyfEntry = struct {
+    buf: [max_size]u8,
+    len: u16,
+
+    pub const points_per_rect = 4;
+    // Each glyph entry's data is zero-padded so its byte length is a multiple
+    // of this; keeps every following entry starting on a 2-byte boundary.
+    pub const entry_alignment = 2;
+    pub const max_contours = @as(comptime_int, cell_w * cell_h);
+    pub const max_points = max_contours * points_per_rect;
+    // Worst-case encoded size: every section at its maximum.
+    pub const max_size =
+        @sizeOf(GlyfHeader) +
+        max_contours * @sizeOf(Big(u16)) + // endPtsOfContours
+        @sizeOf(Big(u16)) + // instructionLength
+        max_points * @sizeOf(SimpleGlyphFlag) + // flags
+        max_points * @sizeOf(Big(i16)) + // worst-case X deltas
+        max_points * @sizeOf(Big(i16)) + // worst-case Y deltas
+        (entry_alignment - 1); // alignment padding
+    pub const short_delta_max: i16 = 255;
+    pub const empty: GlyfEntry = .{ .buf = undefined, .len = 0 };
+
+    // Encode a simple glyph whose outline is the given axis-aligned rects,
+    // one contour each. An empty rect list yields an empty (zero-byte) entry.
+    pub fn fromRects(rects: []const Rect) GlyfEntry {
+        if (rects.len == 0) return .empty;
+
+        const n_contours: u16 = @intCast(rects.len);
+        const n_points = n_contours * points_per_rect;
+
+        var x_min: i16 = std.math.maxInt(i16);
+        var y_min: i16 = std.math.maxInt(i16);
+        var x_max: i16 = std.math.minInt(i16);
+        var y_max: i16 = std.math.minInt(i16);
+        for (rects) |r| {
+            x_min = @min(x_min, r.x0);
+            y_min = @min(y_min, r.y0);
+            x_max = @max(x_max, r.x1);
+            y_max = @max(y_max, r.y1);
+        }
+
+        // Each rect contributes 4 on-curve corners: (x0,y0), (x0,y1), (x1,y1),
+        // (x1,y0). Coordinates are stored as deltas from the previous point;
+        // the first point is a delta from the origin.
+        var abs_x: [max_points]i16 = undefined;
+        var abs_y: [max_points]i16 = undefined;
+        for (rects, 0..) |r, i| {
+            const base = i * points_per_rect;
+            abs_x[base + 0] = r.x0;
+            abs_y[base + 0] = r.y0;
+            abs_x[base + 1] = r.x0;
+            abs_y[base + 1] = r.y1;
+            abs_x[base + 2] = r.x1;
+            abs_y[base + 2] = r.y1;
+            abs_x[base + 3] = r.x1;
+            abs_y[base + 3] = r.y0;
+        }
+
+        var dx: [max_points]i16 = undefined;
+        var dy: [max_points]i16 = undefined;
+        dx[0] = abs_x[0];
+        dy[0] = abs_y[0];
+        for (1..n_points) |i| {
+            dx[i] = abs_x[i] - abs_x[i - 1];
+            dy[i] = abs_y[i] - abs_y[i - 1];
+        }
+
+        var entry: GlyfEntry = .empty;
+        entry.writeHeader(.{
+            .n_contours = .from(@intCast(n_contours)),
+            .x_min = .from(x_min),
+            .y_min = .from(y_min),
+            .x_max = .from(x_max),
+            .y_max = .from(y_max),
+        });
+        entry.writeContourEndPts(n_contours);
+        entry.writeInstructionLength(0);
+        // On-disk order is all flags, then all x-deltas, then all y-deltas.
+        for (0..n_points) |i| entry.writeFlag(computeFlag(dx[i], dy[i]));
+        for (0..n_points) |i| entry.writeDelta(dx[i]);
+        for (0..n_points) |i| entry.writeDelta(dy[i]);
+        entry.padToAlignment();
+        return entry;
+    }
+
+    fn writeHeader(self: *GlyfEntry, header: GlyfHeader) void {
+        @memcpy(self.buf[self.len..][0..@sizeOf(GlyfHeader)], std.mem.asBytes(&header));
+        self.len += @sizeOf(GlyfHeader);
+    }
+
+    // endPtsOfContours: the index of the last point in each contour. Contour
+    // i is the i-th rect, so its last point is at points_per_rect*i + (ppr-1).
+    fn writeContourEndPts(self: *GlyfEntry, n_contours: u16) void {
+        for (0..n_contours) |i| {
+            const last_point: u16 = @intCast(i * points_per_rect + points_per_rect - 1);
+            Big(u16).from(last_point).write(self.buf[self.len..]);
+            self.len += 2;
+        }
+    }
+
+    fn writeInstructionLength(self: *GlyfEntry, instruction_length: u16) void {
+        Big(u16).from(instruction_length).write(self.buf[self.len..]);
+        self.len += 2;
+    }
+
+    fn writeFlag(self: *GlyfEntry, flag: SimpleGlyphFlag) void {
+        self.buf[self.len] = @bitCast(flag);
+        self.len += 1;
+    }
+
+    // Write a coordinate delta using the spec's variable-length encoding:
+    // 0 bytes when zero, 1 unsigned byte when |delta| <= short_delta_max (the
+    // sign lives in the flag's xSame/ySame bit), otherwise a 2-byte i16.
+    fn writeDelta(self: *GlyfEntry, delta: i16) void {
+        if (delta == 0) return;
+        if (delta >= -short_delta_max and delta <= short_delta_max) {
+            self.buf[self.len] = @intCast(if (delta > 0) delta else -delta);
+            self.len += 1;
+        } else {
+            Big(i16).from(delta).write(self.buf[self.len..]);
+            self.len += 2;
+        }
+    }
+
+    fn padToAlignment(self: *GlyfEntry) void {
+        if (self.len % entry_alignment != 0) {
+            self.buf[self.len] = 0;
+            self.len += 1;
+        }
+    }
+};
+
+// Per-point flag: on-curve, plus short/same bits matching writeDelta's
+// encoding of the same delta.
+fn computeFlag(dx: i16, dy: i16) SimpleGlyphFlag {
+    const max = GlyfEntry.short_delta_max;
+    var f: SimpleGlyphFlag = std.mem.zeroes(SimpleGlyphFlag);
+    f.on_curve = true;
+    if (dx == 0) {
+        f.x_same_or_positive = true;
+    } else if (dx >= -max and dx <= max) {
+        f.x_short = true;
+        f.x_same_or_positive = dx > 0;
+    }
+    if (dy == 0) {
+        f.y_same_or_positive = true;
+    } else if (dy >= -max and dy <= max) {
+        f.y_short = true;
+        f.y_same_or_positive = dy > 0;
+    }
+    return f;
+}
+
+pub const Glyf = struct {
+    entries: [num_glyphs_incl_notdef]GlyfEntry,
+
+    // Allocate a tightly-packed byte buffer containing every entry's bytes
+    // concatenated in order, and populate `loca` with each entry's start
+    // offset (plus the trailing sentinel). Caller owns the returned slice.
+    pub fn flatten(self: Glyf, allocator: std.mem.Allocator, loca: *Loca) ![]u8 {
+        var total: usize = 0;
+        for (self.entries) |entry| total += entry.len;
+
+        const out = try allocator.alloc(u8, total);
+        var off: usize = 0;
+        for (0..num_glyphs_incl_notdef) |i| {
+            loca.offsets[i] = Big(u32).from(@intCast(off));
+            const entry = self.entries[i];
+            @memcpy(out[off..][0..entry.len], entry.buf[0..entry.len]);
+            off += entry.len;
+        }
+        loca.offsets[num_glyphs_incl_notdef] = Big(u32).from(@intCast(off));
+        return out;
+    }
 };
 
 pub const Head = extern struct {
@@ -251,7 +453,7 @@ pub const TableRecord = extern struct {
     length: Big(u32),
 };
 
-pub fn buildOs2(metrics: UserFontMetrics) Os2 {
+pub fn buildOs2(metrics: FontMetrics) Os2 {
     return .{
         .version = .from(4), // OS/2 table version 4
         .x_avg_char_width = .from(@intCast(metrics.advance_width)),
@@ -336,36 +538,46 @@ pub fn buildCmap() Cmap {
             .num_groups = .from(1),
             .start_char_code = .from(codepoint_start),
             .end_char_code = .from(codepoint_end),
-            // Real glyphs start at ID 1; ID 0 is the reserved .notdef glyph.
-            .start_glyph_id = .from(1),
+            .start_glyph_id = .from(first_real_glyph_id),
         },
     };
 }
 
-pub fn buildGlyfLoca(
-    glyf: *Glyf,
-    loca: *Loca,
-    descent: i16,
-    rect_w: i16,
-    rect_h: i16,
-) void {
-    glyf.len = 0;
-    // Glyph ID 0 is the reserved .notdef glyph, rendered as an empty outline
-    // (loca[0] == loca[1]). It is never selected by the shader; it exists only
-    // so real glyphs can start at ID 1, keeping cmap results non-zero.
-    loca.offsets[0] = Big(u32).from(0);
-    for (0..num_glyphs) |i| {
-        const glyph_id = i + 1;
-        loca.offsets[glyph_id] = Big(u32).from(@intCast(glyf.len));
-        const size = renderBitmask(bitmasks[i], glyf.buf[glyf.len..], rect_w, rect_h, descent);
-        glyf.len += @intCast(size);
+// Fills `rects` with one rect per set bit in `mask` and returns the count.
+fn maskToRects(rects: []Rect, mask: u32, rect_w: i16, rect_h: i16, descent: i16) u8 {
+    var count: u8 = 0;
+    for (0..(cell_w * cell_h)) |idx| {
+        if ((mask >> @intCast(idx)) & 1 == 0) continue;
+        const col: i16 = @intCast(idx % cell_w);
+        const row: i16 = @intCast(idx / cell_w);
+        const x0 = col * rect_w;
+        // The shader samples image patches y-down (row 0 = top), but TrueType
+        // glyf coordinates are y-up. Invert the row so row 0 lands at the top
+        // of the glyph, matching the patch orientation.
+        const y0 = (@as(i16, cell_h) - 1 - row) * rect_h + descent;
+        rects[count] = .{
+            .x0 = x0,
+            .y0 = y0,
+            .x1 = x0 + rect_w,
+            .y1 = y0 + rect_h,
+        };
+        count += 1;
     }
-    // Trailing sentinel: glyph g's data spans loca[g]..loca[g + 1], so a final
-    // entry is needed to give the last glyph an end offset.
-    loca.offsets[num_glyphs_incl_notdef] = Big(u32).from(@intCast(glyf.len));
+    return count;
 }
 
-pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
+pub fn buildGlyf(glyf: *Glyf, descent: i16, rect_w: i16, rect_h: i16) void {
+    // The reserved .notdef glyph is rendered as an empty outline
+    // (loca[0] == loca[1] once flattened).
+    glyf.entries[notdef_glyph_id] = .empty;
+    var rects: [GlyfEntry.max_contours]Rect = undefined;
+    for (0..num_glyphs) |i| {
+        const n_rects = maskToRects(&rects, bitmasks[i], rect_w, rect_h, descent);
+        glyf.entries[dataset.glyphIdForIndex(i)] = GlyfEntry.fromRects(rects[0..n_rects]);
+    }
+}
+
+pub fn buildHead(metrics: FontMetrics, rect_w: i16, rect_h: i16) Head {
     return .{
         .version_major = .from(1),
         .version_minor = .from(0),
@@ -388,7 +600,7 @@ pub fn buildHead(metrics: UserFontMetrics, rect_w: i16, rect_h: i16) Head {
     };
 }
 
-pub fn buildHhea(metrics: UserFontMetrics, rect_w: i16) Hhea {
+pub fn buildHhea(metrics: FontMetrics, rect_w: i16) Hhea {
     return .{
         .major_version = .from(1),
         .minor_version = .from(0),
@@ -425,8 +637,8 @@ pub fn buildMaxp() Maxp {
     return .{
         .version = .from(fixed16_16(1, 0)),
         .num_glyphs = .from(@intCast(num_glyphs_incl_notdef)),
-        .max_points = .from(MAX_CONTOURS * 4),
-        .max_contours = .from(MAX_CONTOURS),
+        .max_points = .from(GlyfEntry.max_points),
+        .max_contours = .from(GlyfEntry.max_contours),
         .max_composite_points = .from(0),
         .max_composite_contours = .from(0),
         .max_zones = .from(1),
@@ -487,5 +699,20 @@ pub fn buildPost() Post {
         .max_mem_type42 = .from(0),
         .min_mem_type1 = .from(0),
         .max_mem_type1 = .from(0),
+    };
+}
+
+pub fn buildOffsetTable(num_tables: usize) OffsetTable {
+    const sr = blk: {
+        var p: u16 = 1;
+        while (p * 2 <= num_tables) p *= 2;
+        break :blk p * 16;
+    };
+    return .{
+        .sf_version = Big(u32).from(fixed16_16(1, 0)),
+        .num_tables = Big(u16).from(@intCast(num_tables)),
+        .search_range = Big(u16).from(sr),
+        .entry_selector = Big(u16).from(@intCast(std.math.log2_int(u16, sr / 16))),
+        .range_shift = Big(u16).from(@intCast(num_tables * 16 - sr)),
     };
 }

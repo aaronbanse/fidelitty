@@ -7,7 +7,7 @@ const Io = std.Io;
 
 /// Stores a vector mask of vals in [0,1] of the positive and negative space of a glyph.
 pub fn GlyphMask(comptime cell_w: u8, comptime cell_h: u8) type {
-    const GPU_VEC4_ALIGN = 16;
+    const GPU_VEC4_ALIGN = 4 * @sizeOf(f32);
     return extern struct {
         neg: [cell_w * cell_h]f32 align(GPU_VEC4_ALIGN),
         pos: [cell_w * cell_h]f32 align(GPU_VEC4_ALIGN),

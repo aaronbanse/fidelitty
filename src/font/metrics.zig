@@ -7,7 +7,7 @@ const c = @import("c");
 
 /// Metrics needed from the user font to properly size fidelitty font to fill each terminal cell.
 /// The fidelitty font's metrics may differ.
-pub const UserFontMetrics = struct {
+pub const FontMetrics = struct {
     ascent: i16,
     descent: i16,
     line_gap: i16,
@@ -20,7 +20,7 @@ pub const UserFontMetrics = struct {
 const min_units_per_em = 16;
 const max_units_per_em = 16384;
 
-pub fn getFontMetrics(io: Io, user_font_path: []const u8) !UserFontMetrics {
+pub fn getFontMetrics(io: Io, user_font_path: []const u8) !FontMetrics {
     // try absolute path and relative path
     const font_file: Io.File = blk: {
         if (Io.Dir.cwd().openFile(io, user_font_path, .{})) |file| {

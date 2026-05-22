@@ -19,7 +19,7 @@ pub fn initFont(
     user_home_dir: []const u8,
 ) ![]const u8 {
     const user_font_metrics = try metrics.getFontMetrics(io, user_font_path);
-    return try writer.generateFromMetrics(
+    return try writer.writeFont(
         io,
         allocator,
         user_font_metrics,

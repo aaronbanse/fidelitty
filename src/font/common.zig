@@ -1,10 +1,9 @@
-//! Shared constants and low-level helpers for font generation.
+//! Low-level helpers for font generation.
 
 const std = @import("std");
 
-pub const MAX_CONTOURS = 36;
-pub const MAX_GLYPH_SIZE = 1024;
-
+/// A `T` stored in big-endian byte order, the layout
+/// required for every OpenType on-disk field.
 pub fn Big(comptime T: type) type {
     return extern struct {
         raw: [@sizeOf(T)]u8,

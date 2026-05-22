@@ -25,10 +25,10 @@ pub const ColorEqnCache = glyph.ColorEqnCache;
 pub const notdef_glyph_id = 0;
 pub const first_real_glyph_id = 1;
 pub const codepoint_start = config.codepoint_start;
-pub const codepoint_end = codepoint_start + num_glyphs - 1;
+pub const codepoint_end = codepointForIndex(num_glyphs - 1);
 pub inline fn codepointForIndex(i: usize) u32 {
-    return codepoint_start + first_real_glyph_id + i;
+    return codepoint_start + i;
 }
-pub inline fn glyphIdForIndex(i: usize) u16 {
+pub inline fn glyphIdForIndex(i: usize) usize {
     return first_real_glyph_id + i;
 }
