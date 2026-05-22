@@ -7,17 +7,12 @@ pub const cell_h = config.cell_h;
 pub const bitmasks = bitmask_set.generate(cell_w, cell_h);
 pub const num_glyphs = bitmasks.len;
 
-const UnicodeGlyphDataset = glyph.UnicodeGlyphDataset(
+pub const UnicodeGlyphDataset = glyph.UnicodeGlyphDataset(
     cell_w,
     cell_h,
     &bitmasks,
     codepoint_start,
 );
-const instance: UnicodeGlyphDataset = .init();
-
-pub const codepoints = instance.codepoints;
-pub const masks = instance.masks;
-pub const color_eqns = instance.color_eqns;
 
 pub const GlyphMask = glyph.GlyphMask(cell_w, cell_h);
 pub const ColorEqnCache = glyph.ColorEqnCache;

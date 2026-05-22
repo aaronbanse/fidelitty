@@ -85,9 +85,8 @@ pub fn UnicodeGlyphDataset(
         masks: [n_glyphs]GlyphMask(cell_w, cell_h),
         color_eqns: [n_glyphs]ColorEqnCache,
 
-        pub fn init() @This() {
+        pub fn init(self: *@This()) void {
             @setEvalBranchQuota(n_glyphs * 1000);
-            var self: @This() = undefined;
             for (0..n_glyphs) |i| {
                 const bitmask = bitmasks[i];
                 self.codepoints[i] = @as(u32, @intCast(i)) + codepoint_start;
@@ -98,7 +97,6 @@ pub fn UnicodeGlyphDataset(
                 }
                 self.color_eqns[i] = ColorEqnCache.compute(cell_w, cell_h, self.masks[i]);
             }
-            return self;
         }
     };
 }

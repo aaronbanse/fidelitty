@@ -5,6 +5,7 @@ const dataset = @import("dataset.zig");
 const bitmasks = dataset.bitmasks;
 const GlyphMask = dataset.GlyphMask;
 const ColorEqnCache = dataset.ColorEqnCache;
+const UnicodeGlyphDataset = dataset.UnicodeGlyphDataset;
 const cell_w = dataset.cell_w;
 const cell_h = dataset.cell_h;
 const num_glyphs = dataset.num_glyphs;
@@ -131,7 +132,7 @@ pub const Context = struct {
         try self.createCommandPool(compute_device_indices.queue_fam_index);
         try self.createDescriptorPool(max_pipelines);
         try self.createLayouts();
-        try self.createGlyphSet();
+        try self.createGlyphSet(allocator);
     }
 
     pub fn deinit(self: *@This()) void {
@@ -464,7 +465,10 @@ pub const Context = struct {
         }, null);
     }
 
-    fn createGlyphSet(self: *@This()) !void {
+    fn createGlyphSet(self: *@This(), allocator: std.mem.Allocator) !void {
+        const instance = try allocator.create(UnicodeGlyphDataset);
+        defer allocator.destroy(instance);
+        instance.init();
         self._device_codepoint_buf = try self.allocateMemBuffer(
             num_glyphs * @sizeOf(u32),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
@@ -554,9 +558,9 @@ pub const Context = struct {
         const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + num_glyphs));
         const staging_ptr_eqns: [*]ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + num_glyphs));
 
-        @memcpy(staging_ptr_masks[0..num_glyphs], dataset.masks[0..num_glyphs]);
-        @memcpy(staging_ptr_codepoints[0..num_glyphs], dataset.codepoints[0..num_glyphs]);
-        @memcpy(staging_ptr_eqns[0..num_glyphs], dataset.color_eqns[0..num_glyphs]);
+        @memcpy(staging_ptr_masks[0..num_glyphs], instance.masks[0..num_glyphs]);
+        @memcpy(staging_ptr_codepoints[0..num_glyphs], instance.codepoints[0..num_glyphs]);
+        @memcpy(staging_ptr_eqns[0..num_glyphs], instance.color_eqns[0..num_glyphs]);
 
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
