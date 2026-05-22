@@ -3,7 +3,7 @@
 ### A library for rendering images in the terminal
 
 - Functions over ssh, doubling as a form of image compression enabling video to be transmit in realtime
-- Runs comfortably at > 60fps
+- Can run at > 120fps with a lower resolution (2x4 pixels per terminal cell)
 - Compatible with all modern terminals supporting truecolor, font fallbacks, and escape sequences for coloring the foreground and background
 - Available as a Zig library or shared object with C header
 
