@@ -8,12 +8,17 @@
 - Available as a Zig library or shared object with C header
 
 <p align="center">
-  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's render of 'Merfolk Trickster' by Jesper Ejsing">
-  <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
-</p>
+  <img src="examples/assets/merfolk-trickster-ftty-high.png" width="700" alt="Fidelitty's high-res render of 'Merfolk Trickster' by Jesper Ejsing">
 
-<p align="center">
-Some of my favorite art from Jesper Ejsing, rendered with fidelitty.
+  Example render with resolution 3x5 per cell.
+
+  <img src="examples/assets/merfolk-trickster-ftty-low.png" width="700" alt="Fidelitty's low-res render of 'Merfolk Trickster' by Jesper Ejsing">
+
+  Example render with resolution 2x4 per cell.
+
+  <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
+
+  The original image, one of my favorite works from Jesper Ejsing.
 </p>
 
 #### Dependencies
