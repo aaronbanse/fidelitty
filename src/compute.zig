@@ -126,12 +126,24 @@ pub const Context = struct {
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
         self.loadBase();
+
         try self.createInstance();
+        errdefer self.destroyInstance();
+
         const compute_device_indices = try self.createDevice();
+        errdefer self.destroyDevice();
+
         self.createQueue(compute_device_indices.queue_fam_index);
+
         try self.createCommandPool(compute_device_indices.queue_fam_index);
+        errdefer self.destroyCommandPool();
+
         try self.createDescriptorPool(max_pipelines);
+        errdefer self.destroyDescriptorPool();
+
         try self.createLayouts();
+        errdefer self.destroyLayouts();
+
         try self.createGlyphSet(allocator);
     }
 
@@ -144,22 +156,12 @@ pub const Context = struct {
         }
         self._pipelines.deinit();
 
-        self.destroyMemBuffer(self._device_codepoint_buf);
-        self.destroyMemBuffer(self._device_mask_buf);
-        self.destroyMemBuffer(self._device_color_eqn_buf);
-
-        self._device.destroyPipelineLayout(self._pipeline_layout, null);
-        self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
-        self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
-
-        self._device.destroyDescriptorPool(self._desc_pool, null);
-        self._device.destroyCommandPool(self._cmd_pool, null);
-
-        self._device.destroyDevice(null);
-        self._instance.destroyInstance(null);
-
-        self._allocator.destroy(self._device.wrapper);
-        self._allocator.destroy(self._instance.wrapper);
+        self.destroyGlyphSet();
+        self.destroyLayouts();
+        self.destroyDescriptorPool();
+        self.destroyCommandPool();
+        self.destroyDevice();
+        self.destroyInstance();
     }
 
     fn computeInputSize(grid_w: u16, grid_h: u16, pixel_format: PixelFormat, im_patch_w: u8, im_patch_h: u8) usize {
@@ -188,7 +190,16 @@ pub const Context = struct {
 
         var resources: PipelineResources = undefined;
         try self.createPipelineBuffers(&resources, input_size, output_size);
+        errdefer {
+            self.destroyMemBuffer(resources.input_buf);
+            self.destroyMemBuffer(resources.device_input_buf);
+            self.destroyMemBuffer(resources.device_output_buf);
+            self.destroyMemBuffer(resources.output_buf);
+        }
 
+        // buf_io_desc_set is owned by _desc_pool (created without the
+        // free-descriptor-set bit), so it is reclaimed when the pool is
+        // destroyed rather than freed on the error path here.
         try self.createDescriptorSets(&resources);
 
         var handle: PipelineHandle = .{
@@ -202,10 +213,19 @@ pub const Context = struct {
             .im_patch_h = im_patch_h,
         };
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
+        errdefer {
+            self._device.unmapMemory(resources.input_buf.mem);
+            self._device.unmapMemory(resources.output_buf.mem);
+        }
 
         try self.createComputePipeline(&resources);
+        errdefer self._device.destroyPipeline(resources.compute_pipeline, null);
 
         try self.allocatePipelineCommandResources(&resources);
+        errdefer {
+            self._device.freeCommandBuffers(self._cmd_pool, &.{resources.cmd_buf});
+            self._device.destroyFence(resources.pipeline_complete, null);
+        }
 
         var id: usize = 1;
         while (self._pipelines.contains(id)) : (id += 1) {}
@@ -339,6 +359,11 @@ pub const Context = struct {
     }
 
     fn createInstance(self: *@This()) !void {
+        // Allocate the wrapper before creating the instance so a failed
+        // allocation can't strand a live instance with no way to destroy it.
+        const vki = try self._allocator.create(vk.InstanceWrapper);
+        errdefer self._allocator.destroy(vki);
+
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
                 .api_version = @bitCast(vk.makeApiVersion(0, 1, 4, 328)),
@@ -348,10 +373,14 @@ pub const Context = struct {
                 // ================
             },
         }, null);
-        const vki = try self._allocator.create(vk.InstanceWrapper);
-        errdefer self._allocator.destroy(vki);
+
         vki.* = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
         self._instance = vk.InstanceProxy.init(instance_handle, vki);
+    }
+
+    fn destroyInstance(self: *@This()) void {
+        self._instance.destroyInstance(null);
+        self._allocator.destroy(self._instance.wrapper);
     }
 
     const ComputeDeviceIndices = struct { dev_index: u32, queue_fam_index: u32 };
@@ -366,6 +395,11 @@ pub const Context = struct {
 
         self._physical_device = devices[compute_indices.dev_index];
         self._mem_props = self._instance.getPhysicalDeviceMemoryProperties(self._physical_device);
+
+        // Allocate the wrapper before creating the device so a failed
+        // allocation can't strand a live device with no way to destroy it.
+        const vkd = try self._allocator.create(vk.DeviceWrapper);
+        errdefer self._allocator.destroy(vkd);
 
         // create device with features required by the Zig SPIR-V compute kernel
         const queue_priority: f32 = 1.0;
@@ -386,12 +420,16 @@ pub const Context = struct {
                 .shader_int_16 = .true,
             },
         }, null);
-        const vkd = try self._allocator.create(vk.DeviceWrapper);
-        errdefer self._allocator.destroy(vkd);
+
         vkd.* = vk.DeviceWrapper.load(device_handle, self._instance.wrapper.dispatch.vkGetDeviceProcAddr.?);
         self._device = vk.DeviceProxy.init(device_handle, vkd);
 
         return compute_indices;
+    }
+
+    fn destroyDevice (self: *@This()) void {
+        self._device.destroyDevice(null);
+        self._allocator.destroy(self._device.wrapper);
     }
 
     fn createQueue(self: *@This(), compute_queue_fam_index: u32) void {
@@ -403,6 +441,10 @@ pub const Context = struct {
             .queue_family_index = compute_queue_fam_index,
             .flags = .{ .reset_command_buffer_bit = true },
         }, null);
+    }
+
+    fn destroyCommandPool(self: *@This()) void {
+        self._device.destroyCommandPool(self._cmd_pool, null);
     }
 
     fn createDescriptorPool(self: *@This(), max_pipelines: u8) !void {
@@ -417,6 +459,10 @@ pub const Context = struct {
                 },
             },
         }, null);
+    }
+
+    fn destroyDescriptorPool(self: *@This()) void {
+        self._device.destroyDescriptorPool(self._desc_pool, null);
     }
 
     fn createLayouts(self: *@This()) !void {
@@ -443,6 +489,7 @@ pub const Context = struct {
                 },
             },
         }, null);
+        errdefer self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
 
         self._io_desc_layout = try self._device.createDescriptorSetLayout(&.{
             .binding_count = 2,
@@ -461,6 +508,7 @@ pub const Context = struct {
                 },
             },
         }, null);
+        errdefer self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
 
         self._pipeline_layout = try self._device.createPipelineLayout(&.{
             .set_layout_count = 2,
@@ -474,6 +522,12 @@ pub const Context = struct {
         }, null);
     }
 
+    fn destroyLayouts(self: *@This()) void {
+        self._device.destroyPipelineLayout(self._pipeline_layout, null);
+        self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
+        self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
+    }
+
     fn createGlyphSet(self: *@This(), allocator: std.mem.Allocator) !void {
         const instance = try allocator.create(UnicodeGlyphDataset);
         defer allocator.destroy(instance);
@@ -483,17 +537,25 @@ pub const Context = struct {
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_codepoint_buf);
+
         self._device_mask_buf = try self.allocateMemBuffer(
             num_glyphs * @sizeOf(GlyphMask),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_mask_buf);
+
         self._device_color_eqn_buf = try self.allocateMemBuffer(
             num_glyphs * @sizeOf(ColorEqnCache),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_color_eqn_buf);
 
+        // _glyph_set_desc_set is owned by _desc_pool, which lacks the
+        // free-descriptor-set bit, so it cannot be freed individually; it is
+        // reclaimed when the pool is destroyed.
         try self._device.allocateDescriptorSets(&.{
             .descriptor_pool = self._desc_pool,
             .descriptor_set_count = 1,
@@ -576,6 +638,7 @@ pub const Context = struct {
             .level = .primary,
             .command_buffer_count = 1,
         }, @ptrCast(&self._glyph_set_upload_cmd_buf));
+        errdefer self._device.freeCommandBuffers(self._cmd_pool, &.{self._glyph_set_upload_cmd_buf});
 
         try self._device.beginCommandBuffer(self._glyph_set_upload_cmd_buf, &.{ .flags = .{ .one_time_submit_bit = true } });
 
@@ -628,6 +691,12 @@ pub const Context = struct {
         }
     }
 
+    fn destroyGlyphSet(self: *@This()) void {
+        self.destroyMemBuffer(self._device_codepoint_buf);
+        self.destroyMemBuffer(self._device_mask_buf);
+        self.destroyMemBuffer(self._device_color_eqn_buf);
+    }
+
     fn allocateMemBuffer(
         self: @This(),
         size: usize,
@@ -642,6 +711,7 @@ pub const Context = struct {
             .usage = usage,
             .sharing_mode = .exclusive,
         }, null);
+        errdefer self._device.destroyBuffer(mem_buf.buf, null);
 
         const mem_reqs = self._device.getBufferMemoryRequirements(mem_buf.buf);
 
@@ -655,6 +725,7 @@ pub const Context = struct {
             .allocation_size = mem_reqs.size,
             .memory_type_index = mem_type,
         }, null);
+        errdefer self._device.freeMemory(mem_buf.mem, null);
 
         try self._device.bindBufferMemory(mem_buf.buf, mem_buf.mem, 0);
 
@@ -703,16 +774,22 @@ pub const Context = struct {
             .{ .transfer_src_bit = true },
             .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.input_buf);
+
         res.device_input_buf = try self.allocateMemBuffer(
             input_size,
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.device_input_buf);
+
         res.device_output_buf = try self.allocateMemBuffer(
             output_size,
             .{ .transfer_src_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.device_output_buf);
+
         res.output_buf = try self.allocateMemBuffer(
             output_size,
             .{ .transfer_dst_bit = true },
@@ -781,6 +858,7 @@ pub const Context = struct {
             .level = .primary,
             .command_buffer_count = 1,
         }, @ptrCast(&res.cmd_buf));
+        errdefer self._device.freeCommandBuffers(self._cmd_pool, &.{res.cmd_buf});
 
         res.pipeline_complete = try self._device.createFence(&.{}, null);
     }
@@ -937,6 +1015,7 @@ pub const Context = struct {
             res.input_buf.size,
             .{},
         ) orelse return error.MapMemoryFailed;
+        errdefer self._device.unmapMemory(res.input_buf.mem);
         input_surface.* = @ptrCast(@alignCast(input_raw));
 
         const output_raw: *anyopaque = try self._device.mapMemory(
