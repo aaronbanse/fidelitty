@@ -10,10 +10,9 @@ typedef struct ftty_context_t ftty_context_t;
 
 typedef struct ftty_pipeline_t ftty_pipeline_t;
 
-typedef enum {
-    FTTY_PIXEL_RGB  = 0,   // 3 bytes/pixel, channel order: R G B
-    FTTY_PIXEL_BGRA = 1,   // 4 bytes/pixel, channel order: B G R A (alpha ignored)
-} ftty_pixel_format_t;
+typedef uint8_t ftty_pixel_format_t;
+#define FTTY_PIXEL_RGB ((ftty_pixel_format_t)0);
+#define FTTY_PIXEL_BGRA ((ftty_pixel_format_t)1);
 
 typedef struct {
   uint8_t br, bg, bb;
