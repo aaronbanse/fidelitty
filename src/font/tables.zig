@@ -297,7 +297,7 @@ pub const Glyf = struct {
     // Allocate a tightly-packed byte buffer containing every entry's bytes
     // concatenated in order, and populate `loca` with each entry's start
     // offset (plus the trailing sentinel). Caller owns the returned slice.
-    pub fn flatten(self: Glyf, allocator: std.mem.Allocator, loca: *Loca) ![]u8 {
+    pub fn flatten(self: *const Glyf, allocator: std.mem.Allocator, loca: *Loca) ![]u8 {
         var total: usize = 0;
         for (self.entries) |entry| total += entry.len;
 
