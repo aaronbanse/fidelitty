@@ -1,0 +1,25 @@
+//! Low-level helpers for font generation.
+
+const std = @import("std");
+
+/// A `T` stored in big-endian byte order, the layout
+/// required for every OpenType on-disk field.
+pub fn Big(comptime T: type) type {
+    return extern struct {
+        raw: [@sizeOf(T)]u8,
+
+        pub fn from(val: T) @This() {
+            return .{ .raw = @bitCast(std.mem.nativeToBig(T, val)) };
+        }
+
+        pub fn write(self: @This(), buf: []u8) void {
+            @memcpy(buf[0..self.raw.len], &self.raw);
+        }
+    };
+}
+
+/// Builds a 16.16 fixed-point number: integer part in the high u16,
+/// fractional part in the low u16. Used for sfnt version/revision fields.
+pub fn fixed16_16(integer: u16, fraction: u16) u32 {
+    return (@as(u32, integer) << 16) | fraction;
+}

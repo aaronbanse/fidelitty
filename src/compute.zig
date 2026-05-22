@@ -1,13 +1,14 @@
 const std = @import("std");
-const mem = std.mem;
-
 const vk = @import("vulkan");
+const dataset = @import("dataset.zig");
 
-const gen_config = @import("gen_config");
-const dataset_config = @import("dataset_config");
-
-const uni_im = @import("unicode_image.zig");
-const glyph = @import("glyph.zig");
+const bitmasks = dataset.bitmasks;
+const GlyphMask = dataset.GlyphMask;
+const ColorEqnCache = dataset.ColorEqnCache;
+const UnicodeGlyphDataset = dataset.UnicodeGlyphDataset;
+const cell_w = dataset.cell_w;
+const cell_h = dataset.cell_h;
+const num_glyphs = dataset.num_glyphs;
 
 pub const PixelFormat = enum(u8) {
     rgb = 0, // 3 bytes/pixel, channel order: R G B
@@ -30,53 +31,52 @@ pub const PixelFormat = enum(u8) {
     }
 };
 
+/// Output of the pipeline for each terminal cell.
+/// Encodes the foreground / background colors and the codepoint.
+/// Fg / bg colors can be set with escape sequences in most modern terminals.
+pub const UnicodePixelData = extern struct {
+    br: u8,
+    bg: u8,
+    bb: u8,
+    fr: u8,
+    fg: u8,
+    fb: u8,
+    _pad: u16,
+    codepoint: u32,
+};
+
 /// Non-owning handle to a render pipeline managed by compute context
 pub const PipelineHandle = struct {
-    // dimensions of output image in unicode pixels
-    out_im_w: u16,
-    out_im_h: u16,
+    grid_w: u16,
+    grid_h: u16,
 
-    input_surface: [*]u8, // write to this
-    output_surface: [*]uni_im.UnicodePixelData, // read from this
-    // TODO: consider making above a UnicodeImage, compute shaders would need to write chars directly
+    input_surface: [*]u8,
+    output_surface: [*]UnicodePixelData,
 
-    _id: Context.HandleID, // Internal: unique id to tie to vulkan resources
-
-    // Input format config (set at create, preserved across resize)
     pixel_format: PixelFormat,
-    src_cell_w: u8, // source pixels per cell horizontally
-    src_cell_h: u8, // source pixels per cell vertically
+    im_patch_w: u8, // input-image pixels per cell, horizontally
+    im_patch_h: u8, // input-image pixels per cell, vertically
 
-    // input surface dimensions is dependent on size of output image * unicode pixel size
+    _id: Context.HandleID,
+
     pub fn inputDims(self: @This()) struct { w: u32, h: u32 } {
         return .{
-            .w = @as(u32, self.out_im_w) * @as(u32, self.src_cell_w),
-            .h = @as(u32, self.out_im_h) * @as(u32, self.src_cell_h),
+            .w = @as(u32, self.grid_w) * @as(u32, self.im_patch_w),
+            .h = @as(u32, self.grid_h) * @as(u32, self.im_patch_h),
         };
     }
 };
 
-/// Context for accessing compute hardware
+/// Context for managing compute pipelines
 pub const Context = struct {
     pub const HandleID = usize;
 
-    pub const ContextOwnershipMode = enum {
-        Owned,
-        Borrowed,
-    };
-
-    // INTERNAL
-    // ---------------------------
-
-    // Convenience struct since we always bind memory to buffers
     const MemBuffer = struct {
         buf: vk.Buffer,
         mem: vk.DeviceMemory,
         size: usize,
     };
 
-    // Struct for storing handles to resources associated with pipelines,
-    // one for each pipeline
     const PipelineResources = struct {
         input_buf: MemBuffer,
         device_input_buf: MemBuffer,
@@ -92,207 +92,178 @@ pub const Context = struct {
         pipeline_complete: vk.Fence,
     };
 
-    // Layouts reused for each pipeline
     _io_desc_layout: vk.DescriptorSetLayout,
     _glyph_set_desc_layout: vk.DescriptorSetLayout,
     _pipeline_layout: vk.PipelineLayout,
 
-    // physical device info
     _physical_device: vk.PhysicalDevice,
     _mem_props: vk.PhysicalDeviceMemoryProperties,
 
-    // store active pipelines
     _pipelines: std.AutoHashMap(HandleID, PipelineResources),
     _max_pipelines: u8,
-    
-    // Buffers for pipeline-global glyph set
-    _device_codepoint_buf: MemBuffer, // Unicode codepoints
-    _device_mask_buf: MemBuffer, // Glyph masks
-    _device_color_eqn_buf: MemBuffer, // Precomputed values for color equations
-    _num_codepoints: u32,
-    
-    // Size of each unicode pixel in pixels, e.g. compression resolution
-    // Fixed on initialization since it is tied to the dimensions of glyphs in our precomputed glyph set
-    _patch_w: u8,
-    _patch_h: u8,
 
-    // Command buffer for one-time upload
+    _device_codepoint_buf: MemBuffer,
+    _device_mask_buf: MemBuffer,
+    _device_color_eqn_buf: MemBuffer,
+
     _glyph_set_upload_cmd_buf: vk.CommandBuffer,
 
-    // Descriptors to bind glyph set data to compute shaders
     _glyph_set_desc_set: vk.DescriptorSet,
 
-    // Vulkan instance wrappers for dispatch tables
+    _allocator: std.mem.Allocator,
+
+    // Vulkan convenience wrappers.
     _vkb: vk.BaseWrapper,
-    _vki: vk.InstanceWrapper,
-    _vkd: vk.DeviceWrapper,
     _instance: vk.InstanceProxy,
     _device: vk.DeviceProxy,
-    
-    // Handles
     _queue: vk.Queue,
     _cmd_pool: vk.CommandPool,
     _desc_pool: vk.DescriptorPool,
 
-
-    // PUBLIC API
-    // ---------------------------
-
-    // Did we create this context or did we derive it from an existing vulkan instance
-    context_ownership: ContextOwnershipMode,
-
     /// Initialize a standalone vulkan context and setup machinery
-    pub fn init(
-        allocator: mem.Allocator,
-        max_pipelines: u8
-    ) !@This() {
-        var ctx: @This() = undefined;
-
-        ctx.context_ownership = .Owned;
-        ctx._pipelines = .init(allocator);
-        ctx._max_pipelines = max_pipelines;
-        ctx._patch_w = dataset_config.patch_width;
-        ctx._patch_h = dataset_config.patch_height;
-        ctx.loadBase();
-        try ctx.createInstance();
-        const compute_device_indices = try ctx.createDevice();
-        ctx.createQueue(compute_device_indices.queue_fam_index);
-        try ctx.createCommandPool(compute_device_indices.queue_fam_index);
-        try ctx.createDescriptorPool(max_pipelines);
-        try ctx.createLayouts();
-
-        // load glyph dataset to gpu
-        const dataset_raw = @embedFile(gen_config.dataset_file);
-        var dataset: glyph.UnicodeGlyphDataset(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size) = undefined;
-        @memcpy(mem.asBytes(&dataset), dataset_raw);
-        try ctx.createGlyphSet(dataset_config.patch_width, dataset_config.patch_height, dataset_config.charset_size, &dataset);
-
-        return ctx;
-    }
-
-    // TODO: FINISH IMPLEMENTING STUB
-    // Initialize a vulkan context from an existing one to allow attaching directly to output of other pipelines
-    pub fn initFromExisting(self: *@This(), allocator: mem.Allocator) !void {
-        self.context_ownership = .Borrowed;
+    pub fn init(self: *@This(), allocator: std.mem.Allocator, max_pipelines: u8) !void {
+        self._allocator = allocator;
         self._pipelines = .init(allocator);
+        self._max_pipelines = max_pipelines;
+        self.loadBase();
+
+        try self.createInstance();
+        errdefer self.destroyInstance();
+
+        const compute_device_indices = try self.createDevice();
+        errdefer self.destroyDevice();
+
+        self.createQueue(compute_device_indices.queue_fam_index);
+
+        try self.createCommandPool(compute_device_indices.queue_fam_index);
+        errdefer self.destroyCommandPool();
+
+        try self.createDescriptorPool(max_pipelines);
+        errdefer self.destroyDescriptorPool();
+
+        try self.createLayouts();
+        errdefer self.destroyLayouts();
+
+        try self.createGlyphSet(allocator);
     }
 
-    // Cleanup resources
     pub fn deinit(self: *@This()) void {
-        // wait for all work to finish
         self._device.deviceWaitIdle() catch {};
 
-        // Destroy all pipelines
         var iter = self._pipelines.iterator();
         while (iter.next()) |entry| {
             self.destroyPipelineResources(entry.value_ptr);
         }
         self._pipelines.deinit();
 
-        // Only cleanup Vulkan resources if we own them
-        // We may need to change this, and still destroy resources we allocated ourselves, just not the vulkan / device instance.
-        if (self.context_ownership == .Owned) {
-            // Destroy glyph set buffers
-            self.destroyMemBuffer(self._device_codepoint_buf);
-            self.destroyMemBuffer(self._device_mask_buf);
-            self.destroyMemBuffer(self._device_color_eqn_buf);
-
-            // Destroy layouts
-            self._device.destroyPipelineLayout(self._pipeline_layout, null);
-            self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
-            self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
-
-            // Destroy pools (frees associated descriptor sets and command buffers)
-            self._device.destroyDescriptorPool(self._desc_pool, null);
-            self._device.destroyCommandPool(self._cmd_pool, null);
-
-            // Destroy device and instance
-            self._device.destroyDevice(null);
-            self._instance.destroyInstance(null);
-        }       
+        self.destroyGlyphSet();
+        self.destroyLayouts();
+        self.destroyDescriptorPool();
+        self.destroyCommandPool();
+        self.destroyDevice();
+        self.destroyInstance();
     }
 
-    fn computeInputSize(im_w: u16, im_h: u16, pixel_format: PixelFormat, src_cell_w: u8, src_cell_h: u8) usize {
+    fn computeInputSize(grid_w: u16, grid_h: u16, pixel_format: PixelFormat, im_patch_w: u8, im_patch_h: u8) usize {
         const bpp: usize = pixel_format.bpp();
-        return bpp * @as(usize, im_w) * @as(usize, src_cell_w) * @as(usize, im_h) * @as(usize, src_cell_h);
+        return bpp * @as(usize, grid_w) * @as(usize, im_patch_w) * @as(usize, grid_h) * @as(usize, im_patch_h);
     }
 
     pub fn createRenderPipeline(
         self: *@This(),
-        im_w: u16,
-        im_h: u16,
+        grid_w: u16,
+        grid_h: u16,
     ) !PipelineHandle {
-        return self.createRenderPipelineEx(im_w, im_h, .rgb, self._patch_w, self._patch_h);
+        return self.createRenderPipelineEx(grid_w, grid_h, .rgb, cell_w, cell_h);
     }
 
     pub fn createRenderPipelineEx(
         self: *@This(),
-        im_w: u16,
-        im_h: u16,
+        grid_w: u16,
+        grid_h: u16,
         pixel_format: PixelFormat,
-        src_cell_w: u8,
-        src_cell_h: u8,
+        im_patch_w: u8,
+        im_patch_h: u8,
     ) !PipelineHandle {
-        const input_size = computeInputSize(im_w, im_h, pixel_format, src_cell_w, src_cell_h);
-        const output_size = @as(usize, im_w) * @as(usize, im_h) * @sizeOf(uni_im.UnicodePixelData);
+        const input_size = computeInputSize(grid_w, grid_h, pixel_format, im_patch_w, im_patch_h);
+        const output_size = @as(usize, grid_w) * @as(usize, grid_h) * @sizeOf(UnicodePixelData);
 
-        // initialize and allocate resources
         var resources: PipelineResources = undefined;
         try self.createPipelineBuffers(&resources, input_size, output_size);
+        errdefer {
+            self.destroyMemBuffer(resources.input_buf);
+            self.destroyMemBuffer(resources.device_input_buf);
+            self.destroyMemBuffer(resources.device_output_buf);
+            self.destroyMemBuffer(resources.output_buf);
+        }
 
+        // buf_io_desc_set is owned by _desc_pool (created without the
+        // free-descriptor-set bit), so it is reclaimed when the pool is
+        // destroyed rather than freed on the error path here.
         try self.createDescriptorSets(&resources);
 
-        // create handle mapped to input / output buffers
         var handle: PipelineHandle = .{
-            .out_im_w = im_w,
-            .out_im_h = im_h,
+            .grid_w = grid_w,
+            .grid_h = grid_h,
             .input_surface = undefined,
             .output_surface = undefined,
             ._id = undefined,
             .pixel_format = pixel_format,
-            .src_cell_w = src_cell_w,
-            .src_cell_h = src_cell_h,
+            .im_patch_w = im_patch_w,
+            .im_patch_h = im_patch_h,
         };
-        // map handle to input / output buffers
         try self.mapCpuBuffersToHandle(&resources, &handle.input_surface, &handle.output_surface);
+        errdefer {
+            self._device.unmapMemory(resources.input_buf.mem);
+            self._device.unmapMemory(resources.output_buf.mem);
+        }
 
         try self.createComputePipeline(&resources);
+        errdefer self._device.destroyPipeline(resources.compute_pipeline, null);
 
         try self.allocatePipelineCommandResources(&resources);
+        errdefer {
+            self._device.freeCommandBuffers(self._cmd_pool, &.{resources.cmd_buf});
+            self._device.destroyFence(resources.pipeline_complete, null);
+        }
 
-        // obtain unique id for handle
         var id: usize = 1;
         while (self._pipelines.contains(id)) : (id += 1) {}
         handle._id = id;
 
-        // add pipeline to registry
         try self._pipelines.put(id, resources);
 
         return handle;
     }
 
-    pub fn executeRenderPipelineAll(self: *@This(), handle: PipelineHandle) !void {
-        return self.executeRenderPipelineRegion(handle, 0, 0, handle.out_im_w, handle.out_im_h);
+    pub fn executeRenderPipeline(self: *@This(), handle: PipelineHandle) !void {
+        return self.executeRenderPipelineRegion(handle, 0, 0, handle.grid_w, handle.grid_h);
     }
 
     pub fn executeRenderPipelineRegion(
         self: *@This(),
         handle: PipelineHandle,
-        dispatch_x: u16, dispatch_y: u16,
-        dispatch_w: u16, dispatch_h: u16,
+        dispatch_x: u16,
+        dispatch_y: u16,
+        dispatch_w: u16,
+        dispatch_h: u16,
     ) !void {
-        const res: PipelineResources = self._pipelines.get(handle._id)
-            orelse return error.InvalidPipelineHandle;
+        const res: PipelineResources = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
 
         try self.recordPipelineCommandBuffer(
-            res, handle, dispatch_x, dispatch_y, dispatch_w, dispatch_h,
+            res,
+            handle,
+            dispatch_x,
+            dispatch_y,
+            dispatch_w,
+            dispatch_h,
         );
 
-        try self._device.resetFences(1, &.{res.pipeline_complete});
+        try self._device.resetFences(&.{res.pipeline_complete});
 
         try self._device.queueSubmit(
             self._queue,
-            1, &[_]vk.SubmitInfo{.{
+            &[_]vk.SubmitInfo{.{
                 .command_buffer_count = 1,
                 .p_command_buffers = @ptrCast(&res.cmd_buf),
                 .p_wait_dst_stage_mask = &[_]vk.PipelineStageFlags{.{ .compute_shader_bit = true }},
@@ -304,42 +275,33 @@ pub const Context = struct {
     pub fn waitRenderPipeline(self: @This(), handle: PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
         const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
-        _ = try self._device.waitForFences(1, @ptrCast(&res.pipeline_complete), .true, timeout);
+        if (try self._device.waitForFences(&.{res.pipeline_complete}, .true, timeout) == .timeout) {
+            return error.RenderPipelineTimeout;
+        }
     }
 
-    pub fn resizeRenderPipeline(
-        self: *@This(),
-        handle: *PipelineHandle,
-        new_w: u16, new_h: u16
-    ) !void {
+    pub fn resizeRenderPipeline(self: *@This(), handle: *PipelineHandle, new_grid_w: u16, new_grid_h: u16) !void {
         const res = self._pipelines.getPtr(handle._id) orelse return error.InvalidPipelineHandle;
 
-        // wait for work on this pipeline to complete
         try self.waitRenderPipeline(handle.*);
 
-        // Calculate new sizes
-        const new_input_size = computeInputSize(new_w, new_h, handle.pixel_format, handle.src_cell_w, handle.src_cell_h);
-        const new_output_size = @as(usize, new_w) * @as(usize, new_h) * @sizeOf(uni_im.UnicodePixelData);
+        const new_input_size = computeInputSize(new_grid_w, new_grid_h, handle.pixel_format, handle.im_patch_w, handle.im_patch_h);
+        const new_output_size = @as(usize, new_grid_w) * @as(usize, new_grid_h) * @sizeOf(UnicodePixelData);
 
-        // Unmap old buffers
         self._device.unmapMemory(res.input_buf.mem);
         self._device.unmapMemory(res.output_buf.mem);
 
-        // Destroy old buffers
         self.destroyMemBuffer(res.input_buf);
         self.destroyMemBuffer(res.device_input_buf);
         self.destroyMemBuffer(res.device_output_buf);
         self.destroyMemBuffer(res.output_buf);
 
-        // Destroy old command buffer and fence
-        self._device.freeCommandBuffers(self._cmd_pool, 1, @ptrCast(&res.cmd_buf));
+        self._device.freeCommandBuffers(self._cmd_pool, &.{res.cmd_buf});
         self._device.destroyFence(res.pipeline_complete, null);
 
-        // Allocate new buffers
         try self.createPipelineBuffers(res, new_input_size, new_output_size);
 
-        // Update descriptor sets to point to new buffers
-        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 0,
@@ -368,17 +330,14 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, null);
+        }, &.{});
 
-        // Remap CPU buffers to handle
         try self.mapCpuBuffersToHandle(res, &handle.input_surface, &handle.output_surface);
 
-        // Reallocate command buffer and fence
         try self.allocatePipelineCommandResources(res);
 
-        // Update handle dimensions
-        handle.out_im_w = new_w;
-        handle.out_im_h = new_h;
+        handle.grid_w = new_grid_w;
+        handle.grid_h = new_grid_h;
     }
 
     pub fn destroyRenderPipelines(self: *@This(), handles: []PipelineHandle) void {
@@ -395,55 +354,84 @@ pub const Context = struct {
         }
     }
 
-    // INTERNAL
-    // ---------------------------
     fn loadBase(self: *@This()) void {
         self._vkb = vk.BaseWrapper.load(vkGetInstanceProcAddr);
     }
 
     fn createInstance(self: *@This()) !void {
+        // Allocate the wrapper before creating the instance so a failed
+        // allocation can't strand a live instance with no way to destroy it.
+        const vki = try self._allocator.create(vk.InstanceWrapper);
+        errdefer self._allocator.destroy(vki);
+
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
-                .api_version = @bitCast(vk.makeApiVersion(0, 1, 4, 328)),
-                .engine_version = 0, // ignore
-                .application_version = 0, // ignore
+                // 8-bit storage buffers and shaderInt8 (the only non-1.0
+                // features used) are core in Vulkan 1.2, so that is the floor.
+                .api_version = @bitCast(vk.makeApiVersion(0, 1, 2, 0)),
+                // ignore =========
+                .engine_version = 0,
+                .application_version = 0,
+                // ================
             },
         }, null);
-        self._vki = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
-        self._instance = vk.InstanceProxy.init(instance_handle, &self._vki);
+
+        vki.* = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
+        self._instance = vk.InstanceProxy.init(instance_handle, vki);
     }
 
-    const ComputeDeviceIndices = struct {
-        dev_index: u32,
-        queue_fam_index: u32
-    };
+    fn destroyInstance(self: *@This()) void {
+        self._instance.destroyInstance(null);
+        self._allocator.destroy(self._instance.wrapper);
+    }
+
+    const ComputeDeviceIndices = struct { dev_index: u32, queue_fam_index: u32 };
 
     fn createDevice(self: *@This()) !ComputeDeviceIndices {
         // find compute-capable device
         var num_devices: u32 = undefined;
         var devices: [16]vk.PhysicalDevice = undefined;
         _ = try self._instance.enumeratePhysicalDevices(&num_devices, &devices);
-        const compute_device_found = findComputeDevice(devices[0..num_devices], &self._vki);
+        const compute_device_found = findComputeDevice(devices[0..num_devices], self._instance.wrapper);
         const compute_indices = compute_device_found orelse return error.NoComputeCapableDevice;
 
-        // save physical device info
         self._physical_device = devices[compute_indices.dev_index];
         self._mem_props = self._instance.getPhysicalDeviceMemoryProperties(self._physical_device);
 
-        // create device
+        // Allocate the wrapper before creating the device so a failed
+        // allocation can't strand a live device with no way to destroy it.
+        const vkd = try self._allocator.create(vk.DeviceWrapper);
+        errdefer self._allocator.destroy(vkd);
+
+        // create device with features required by the Zig SPIR-V compute kernel
         const queue_priority: f32 = 1.0;
-        const device_handle = try self._vki.createDevice(self._physical_device, &.{
+        var vk12_features: vk.PhysicalDeviceVulkan12Features = .{
+            .storage_buffer_8_bit_access = .true,
+            .shader_int_8 = .true,
+        };
+        const device_handle = try self._instance.createDevice(self._physical_device, &.{
+            .p_next = @ptrCast(&vk12_features),
             .queue_create_info_count = 1,
             .p_queue_create_infos = &[_]vk.DeviceQueueCreateInfo{.{
                 .queue_family_index = compute_indices.queue_fam_index,
                 .queue_count = 1,
                 .p_queue_priorities = @ptrCast(&queue_priority),
             }},
+            .p_enabled_features = &.{
+                .shader_int_64 = .true,
+                .shader_int_16 = .true,
+            },
         }, null);
-        self._vkd = vk.DeviceWrapper.load(device_handle, self._vki.dispatch.vkGetDeviceProcAddr.?);
-        self._device = vk.DeviceProxy.init(device_handle, &self._vkd);
+
+        vkd.* = vk.DeviceWrapper.load(device_handle, self._instance.wrapper.dispatch.vkGetDeviceProcAddr.?);
+        self._device = vk.DeviceProxy.init(device_handle, vkd);
 
         return compute_indices;
+    }
+
+    fn destroyDevice (self: *@This()) void {
+        self._device.destroyDevice(null);
+        self._allocator.destroy(self._device.wrapper);
     }
 
     fn createQueue(self: *@This(), compute_queue_fam_index: u32) void {
@@ -457,22 +445,29 @@ pub const Context = struct {
         }, null);
     }
 
+    fn destroyCommandPool(self: *@This()) void {
+        self._device.destroyCommandPool(self._cmd_pool, null);
+    }
+
     fn createDescriptorPool(self: *@This(), max_pipelines: u8) !void {
         self._desc_pool = try self._device.createDescriptorPool(&.{
-            .max_sets = 1 + max_pipelines,
+            .max_sets = 1 + max_pipelines, // 1 for static data, 1 for each pipeline
             .pool_size_count = 1,
             .p_pool_sizes = &[_]vk.DescriptorPoolSize{
                 .{
                     .type = .storage_buffer,
-                   // 3 static storage buffers and 2 storage buffers per pipeline 
+                    // 3 static storage buffers and 2 storage buffers per pipeline
                     .descriptor_count = 3 + (max_pipelines * 2),
                 },
             },
         }, null);
     }
 
+    fn destroyDescriptorPool(self: *@This()) void {
+        self._device.destroyDescriptorPool(self._desc_pool, null);
+    }
+
     fn createLayouts(self: *@This()) !void {
-        // Descriptor layout for static glyph set buffers
         self._glyph_set_desc_layout = try self._device.createDescriptorSetLayout(&.{
             .binding_count = 3,
             .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
@@ -496,8 +491,8 @@ pub const Context = struct {
                 },
             },
         }, null);
+        errdefer self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
 
-        // Descriptor layout for pipeline input / output buffers
         self._io_desc_layout = try self._device.createDescriptorSetLayout(&.{
             .binding_count = 2,
             .p_bindings = &[_]vk.DescriptorSetLayoutBinding{
@@ -515,14 +510,11 @@ pub const Context = struct {
                 },
             },
         }, null);
+        errdefer self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
 
-        // Define pipeline layout
         self._pipeline_layout = try self._device.createPipelineLayout(&.{
             .set_layout_count = 2,
-            .p_set_layouts = &[_]vk.DescriptorSetLayout{
-                self._glyph_set_desc_layout,
-                self._io_desc_layout
-            },
+            .p_set_layouts = &[_]vk.DescriptorSetLayout{ self._glyph_set_desc_layout, self._io_desc_layout },
             .push_constant_range_count = 1,
             .p_push_constant_ranges = &[_]vk.PushConstantRange{.{
                 .stage_flags = .{ .compute_bit = true },
@@ -532,40 +524,47 @@ pub const Context = struct {
         }, null);
     }
 
-    fn createGlyphSet(self: *@This(),
-        comptime w: u8, comptime h: u8, comptime n: u16, 
-        glyph_set: *const glyph.UnicodeGlyphDataset(w,h,n)
-    ) !void {
-        self._num_codepoints = @intCast(n);
+    fn destroyLayouts(self: *@This()) void {
+        self._device.destroyPipelineLayout(self._pipeline_layout, null);
+        self._device.destroyDescriptorSetLayout(self._io_desc_layout, null);
+        self._device.destroyDescriptorSetLayout(self._glyph_set_desc_layout, null);
+    }
 
-        // allocate buffers
+    fn createGlyphSet(self: *@This(), allocator: std.mem.Allocator) !void {
+        const instance = try allocator.create(UnicodeGlyphDataset);
+        defer allocator.destroy(instance);
+        instance.init();
         self._device_codepoint_buf = try self.allocateMemBuffer(
-            glyph_set.codepoints.len * @sizeOf(u32),
+            num_glyphs * @sizeOf(u32),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
-            .{ .device_local_bit = true }
+            .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_codepoint_buf);
 
         self._device_mask_buf = try self.allocateMemBuffer(
-            glyph_set.masks.len * @sizeOf(glyph.GlyphMask(w,h)),
+            num_glyphs * @sizeOf(GlyphMask),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
-            .{ .device_local_bit = true }
+            .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_mask_buf);
 
         self._device_color_eqn_buf = try self.allocateMemBuffer(
-            glyph_set.color_eqns.len * @sizeOf(glyph.ColorEqnParams),
+            num_glyphs * @sizeOf(ColorEqnCache),
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
-            .{ .device_local_bit = true }
+            .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(self._device_color_eqn_buf);
 
-        // allocate the one descriptor set which will be used many times
+        // _glyph_set_desc_set is owned by _desc_pool, which lacks the
+        // free-descriptor-set bit, so it cannot be freed individually; it is
+        // reclaimed when the pool is destroyed.
         try self._device.allocateDescriptorSets(&.{
             .descriptor_pool = self._desc_pool,
             .descriptor_set_count = 1,
             .p_set_layouts = &[_]vk.DescriptorSetLayout{self._glyph_set_desc_layout},
         }, @ptrCast(&self._glyph_set_desc_set));
 
-        // bind descriptors to buffers
-        self._device.updateDescriptorSets(3, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = self._glyph_set_desc_set,
                 .dst_binding = 0,
@@ -573,7 +572,7 @@ pub const Context = struct {
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                    .buffer = self._device_codepoint_buf.buf,
+                    .buffer = self._device_mask_buf.buf,
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
@@ -587,7 +586,7 @@ pub const Context = struct {
                 .descriptor_count = 1,
                 .descriptor_type = .storage_buffer,
                 .p_buffer_info = &[_]vk.DescriptorBufferInfo{.{
-                    .buffer = self._device_mask_buf.buf,
+                    .buffer = self._device_codepoint_buf.buf,
                     .offset = 0,
                     .range = vk.WHOLE_SIZE,
                 }},
@@ -608,131 +607,128 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, &.{});
+        }, &.{});
 
-        // allocate buffer
+        // Coalesce all 3 buffers in the dataset into one staging buffer and push to the gpu
+
         const staging_buffer = try self.allocateMemBuffer(
-            self._num_codepoints * (@sizeOf(u32) + @sizeOf(glyph.GlyphMask(w,h)) + @sizeOf(glyph.ColorEqnParams)),
+            num_glyphs * (@sizeOf(u32) + @sizeOf(GlyphMask) + @sizeOf(ColorEqnCache)),
             .{ .transfer_src_bit = true },
-            .{ .host_visible_bit = true, .host_coherent_bit = true }
+            .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
+        defer self.destroyMemBuffer(staging_buffer);
 
-        // map buffer to cpu pointer for memcpy
         const staging_mem_reqs = self._device.getBufferMemoryRequirements(staging_buffer.buf);
-        const staging_ptr_raw: *anyopaque = try self._device.mapMemory(staging_buffer.mem, 0, staging_mem_reqs.size, .{})
-            orelse return error.MapMemoryFailed;
+        const staging_ptr_raw: *anyopaque = try self._device.mapMemory(
+            staging_buffer.mem,
+            0,
+            staging_mem_reqs.size,
+            .{},
+        ) orelse return error.MapMemoryFailed;
 
-        // cast raw to suitable types
-        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_raw));
-        const staging_ptr_masks: [*]glyph.GlyphMask(w,h) = @ptrCast(@alignCast(staging_ptr_codepoints + self._num_codepoints)); // offset is end of prev
-        const staging_ptr_eqns: [*]glyph.ColorEqnParams = @ptrCast(@alignCast(staging_ptr_masks + self._num_codepoints)); // offset is end of prev
+        // NOTE: staging ptr masks is placed first, since it has very strict alignment requirements.
+        const staging_ptr_masks: [*]GlyphMask = @ptrCast(@alignCast(staging_ptr_raw));
+        const staging_ptr_codepoints: [*]u32 = @ptrCast(@alignCast(staging_ptr_masks + num_glyphs));
+        const staging_ptr_eqns: [*]ColorEqnCache = @ptrCast(@alignCast(staging_ptr_codepoints + num_glyphs));
 
-        // copy memory into staging buffer
-        @memcpy(staging_ptr_codepoints[0..self._num_codepoints], glyph_set.codepoints[0..self._num_codepoints]);
-        @memcpy(staging_ptr_masks[0..self._num_codepoints], glyph_set.masks[0..self._num_codepoints]);
-        @memcpy(staging_ptr_eqns[0..self._num_codepoints], glyph_set.color_eqns[0..self._num_codepoints]);
+        @memcpy(staging_ptr_masks[0..num_glyphs], instance.masks[0..num_glyphs]);
+        @memcpy(staging_ptr_codepoints[0..num_glyphs], instance.codepoints[0..num_glyphs]);
+        @memcpy(staging_ptr_eqns[0..num_glyphs], instance.color_eqns[0..num_glyphs]);
 
         try self._device.allocateCommandBuffers(&.{
             .command_pool = self._cmd_pool,
             .level = .primary,
             .command_buffer_count = 1,
         }, @ptrCast(&self._glyph_set_upload_cmd_buf));
+        errdefer self._device.freeCommandBuffers(self._cmd_pool, &.{self._glyph_set_upload_cmd_buf});
 
-        try self._device.beginCommandBuffer(
-            self._glyph_set_upload_cmd_buf,
-            &.{ .flags = .{ .one_time_submit_bit = true } }
-        );
+        try self._device.beginCommandBuffer(self._glyph_set_upload_cmd_buf, &.{ .flags = .{ .one_time_submit_bit = true } });
 
-        // copy codepoints
-        self._device.cmdCopyBuffer(
-            self._glyph_set_upload_cmd_buf,
-            staging_buffer.buf,
-            self._device_codepoint_buf.buf,
-            1, &[_]vk.BufferCopy{.{
-                .src_offset = 0,
-                .dst_offset = 0,
-                .size = self._device_codepoint_buf.size,
-            }},
-        );
-
-        // copy masks
         self._device.cmdCopyBuffer(
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_mask_buf.buf,
-            1, &[_]vk.BufferCopy{.{
-                .src_offset = self._device_codepoint_buf.size,
+            &[_]vk.BufferCopy{.{
+                .src_offset = 0,
                 .dst_offset = 0,
                 .size = self._device_mask_buf.size,
             }},
         );
 
-        // copy equation caches
+        self._device.cmdCopyBuffer(
+            self._glyph_set_upload_cmd_buf,
+            staging_buffer.buf,
+            self._device_codepoint_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = self._device_mask_buf.size,
+                .dst_offset = 0,
+                .size = self._device_codepoint_buf.size,
+            }},
+        );
+
         self._device.cmdCopyBuffer(
             self._glyph_set_upload_cmd_buf,
             staging_buffer.buf,
             self._device_color_eqn_buf.buf,
-            1, &[_]vk.BufferCopy{.{
-                .src_offset = self._device_codepoint_buf.size + self._device_mask_buf.size,
+            &[_]vk.BufferCopy{.{
+                .src_offset = self._device_mask_buf.size + self._device_codepoint_buf.size,
                 .dst_offset = 0,
                 .size = self._device_color_eqn_buf.size,
             }},
         );
 
-        // done
         try self._device.endCommandBuffer(self._glyph_set_upload_cmd_buf);
 
         const fence = try self._device.createFence(&.{}, null);
         defer self._device.destroyFence(fence, null);
 
-        // submit command
-        try self._device.queueSubmit(
-            self._queue,
-            1, &[_]vk.SubmitInfo{.{
-                .command_buffer_count = 1,
-                .p_command_buffers = @ptrCast(&self._glyph_set_upload_cmd_buf),
-            }},
-            fence
-        );
+        try self._device.queueSubmit(self._queue, &[_]vk.SubmitInfo{.{
+            .command_buffer_count = 1,
+            .p_command_buffers = @ptrCast(&self._glyph_set_upload_cmd_buf),
+        }}, fence);
 
-        // cost for waiting is minimal, simplifies logic later on with semaphores
-        const timeout: u64 = 1_000_000_000; // 1 second
-        _ = try self._device.waitForFences(1, &.{fence}, .true, timeout);
+        const timeout: u64 = 100_000_000; // 100 milliseconds
+        if (try self._device.waitForFences(&.{fence}, .true, timeout) == .timeout) {
+            return error.GlyphSetUploadTimeout;
+        }
     }
 
-    // Create and allocate a buffer and associated memory
+    fn destroyGlyphSet(self: *@This()) void {
+        self.destroyMemBuffer(self._device_codepoint_buf);
+        self.destroyMemBuffer(self._device_mask_buf);
+        self.destroyMemBuffer(self._device_color_eqn_buf);
+    }
+
     fn allocateMemBuffer(
         self: @This(),
         size: usize,
         usage: vk.BufferUsageFlags,
-        mem_props: vk.MemoryPropertyFlags
+        mem_props: vk.MemoryPropertyFlags,
     ) !MemBuffer {
         var mem_buf: MemBuffer = undefined;
         mem_buf.size = size;
-        
-        // create buffer
+
         mem_buf.buf = try self._device.createBuffer(&.{
             .size = size,
             .usage = usage,
             .sharing_mode = .exclusive,
         }, null);
-        
+        errdefer self._device.destroyBuffer(mem_buf.buf, null);
+
         const mem_reqs = self._device.getBufferMemoryRequirements(mem_buf.buf);
 
-        // find suitable memory type
         const mem_type = findMemoryType(
             self._mem_props,
             mem_reqs.memory_type_bits,
-            mem_props
+            mem_props,
         ) orelse return error.NoSuitableMemory;
 
-        // allocate memory
         mem_buf.mem = try self._device.allocateMemory(&.{
             .allocation_size = mem_reqs.size,
             .memory_type_index = mem_type,
         }, null);
+        errdefer self._device.freeMemory(mem_buf.mem, null);
 
-        // bind buffer to memory w/ 0 offset
         try self._device.bindBufferMemory(mem_buf.buf, mem_buf.mem, 0);
 
         return mem_buf;
@@ -752,22 +748,36 @@ pub const Context = struct {
         return null;
     }
 
-    fn findComputeDevice(
-        devices: []vk.PhysicalDevice,
-        vki: *const vk.InstanceWrapper
-    ) ?ComputeDeviceIndices {
+    // Ranks physical device types best-first so a real GPU is preferred over a
+    // software rasterizer (e.g. llvmpipe) when several devices are compute-capable.
+    fn deviceTypeRank(device_type: vk.PhysicalDeviceType) u8 {
+        return switch (device_type) {
+            .discrete_gpu => 4,
+            .integrated_gpu => 3,
+            .virtual_gpu => 2,
+            .cpu => 1,
+            else => 0,
+        };
+    }
+
+    fn findComputeDevice(devices: []vk.PhysicalDevice, vki: *const vk.InstanceWrapper) ?ComputeDeviceIndices {
+        var best: ?ComputeDeviceIndices = null;
+        var best_rank: u8 = 0;
         for (devices, 0..) |dev, i| {
-            // get queue familites for device
             var queue_family_count: u32 = undefined;
             var queue_families: [16]vk.QueueFamilyProperties = undefined;
             vki.getPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, null);
             vki.getPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, &queue_families);
 
-            // If device has compute queue family, return it
-            const compute_queue_family = findComputeQueueFamily(queue_families[0..queue_family_count]);
-            if (compute_queue_family) |qf| return .{ .dev_index = @intCast(i), .queue_fam_index = qf };
+            const compute_queue_family = findComputeQueueFamily(queue_families[0..queue_family_count]) orelse continue;
+
+            const rank = deviceTypeRank(vki.getPhysicalDeviceProperties(dev).device_type);
+            if (best == null or rank > best_rank) {
+                best = .{ .dev_index = @intCast(i), .queue_fam_index = compute_queue_family };
+                best_rank = rank;
+            }
         }
-        return null;
+        return best;
     }
 
     fn findComputeQueueFamily(families: []vk.QueueFamilyProperties) ?u32 {
@@ -780,32 +790,31 @@ pub const Context = struct {
     }
 
     fn createPipelineBuffers(self: *@This(), res: *PipelineResources, input_size: usize, output_size: usize) !void {
-        // cpu-side input buffer to write to
         res.input_buf = try self.allocateMemBuffer(
             input_size,
-            .{ .transfer_src_bit = true, },
-            .{ .host_visible_bit = true, .host_coherent_bit = true }
+            .{ .transfer_src_bit = true },
+            .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.input_buf);
 
-        // gpu-side input buffer that shaders can bind to
         res.device_input_buf = try self.allocateMemBuffer(
             input_size,
             .{ .transfer_dst_bit = true, .storage_buffer_bit = true },
-            .{ .device_local_bit = true }
+            .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.device_input_buf);
 
-        // gpu-side output buffer that shaders can bind to
         res.device_output_buf = try self.allocateMemBuffer(
             output_size,
             .{ .transfer_src_bit = true, .storage_buffer_bit = true },
             .{ .device_local_bit = true },
         );
+        errdefer self.destroyMemBuffer(res.device_output_buf);
 
-        // cpu-side output buffer to read from
         res.output_buf = try self.allocateMemBuffer(
             output_size,
             .{ .transfer_dst_bit = true },
-            .{ .host_visible_bit = true, .host_coherent_bit = true }
+            .{ .host_visible_bit = true, .host_coherent_bit = true },
         );
     }
 
@@ -816,8 +825,7 @@ pub const Context = struct {
             .p_set_layouts = &[_]vk.DescriptorSetLayout{self._io_desc_layout},
         }, @ptrCast(&res.buf_io_desc_set));
 
-        // bind I/O buffers to descriptor set
-        self._device.updateDescriptorSets(2, &[_]vk.WriteDescriptorSet{
+        self._device.updateDescriptorSets(&[_]vk.WriteDescriptorSet{
             .{
                 .dst_set = res.buf_io_desc_set,
                 .dst_binding = 0,
@@ -846,24 +854,23 @@ pub const Context = struct {
                 .p_image_info = &.{},
                 .p_texel_buffer_view = &.{},
             },
-        }, 0, null);
+        }, &.{});
     }
 
-    // extern to conform to C ABI layout, must match GLSL push constant block (std430)
     const PushConstants = extern struct {
-        num_codepoints: u32,
-        out_im_w: u32,
+        num_glyphs: u32,
+        grid_w: u32,
         dispatch_x: u32,
         dispatch_y: u32,
         dispatch_w: u32,
         dispatch_h: u32,
         input_bpp: u32,
-        _pad: u32, // alignment padding for ivec3 (16-byte aligned in std430)
+        _pad: u32,
         swizzle: [3]i32,
-        input_cell_w: u32,
-        input_cell_h: u32,
-        patch_w: u32,
-        patch_h: u32,
+        im_patch_w: u32,
+        im_patch_h: u32,
+        cell_w: u32,
+        cell_h: u32,
     };
 
     fn allocatePipelineCommandResources(self: *@This(), res: *PipelineResources) !void {
@@ -872,6 +879,7 @@ pub const Context = struct {
             .level = .primary,
             .command_buffer_count = 1,
         }, @ptrCast(&res.cmd_buf));
+        errdefer self._device.freeCommandBuffers(self._cmd_pool, &.{res.cmd_buf});
 
         res.pipeline_complete = try self._device.createFence(&.{}, null);
     }
@@ -880,16 +888,25 @@ pub const Context = struct {
         self: *@This(),
         res: PipelineResources,
         handle: PipelineHandle,
-        dispatch_x: u32, dispatch_y: u32,
-        dispatch_w: u32, dispatch_h: u32,
+        dispatch_x: u32,
+        dispatch_y: u32,
+        dispatch_w: u32,
+        dispatch_h: u32,
     ) !void {
         try self._device.resetCommandBuffer(res.cmd_buf, .{});
         try self._device.beginCommandBuffer(res.cmd_buf, &.{});
 
         // copy CPU to GPU
-        self._device.cmdCopyBuffer(res.cmd_buf, res.input_buf.buf, res.device_input_buf.buf, 1, &[_]vk.BufferCopy{
-            .{ .src_offset = 0, .dst_offset = 0, .size = res.input_buf.size }
-        });
+        self._device.cmdCopyBuffer(
+            res.cmd_buf,
+            res.input_buf.buf,
+            res.device_input_buf.buf,
+            &[_]vk.BufferCopy{.{
+                .src_offset = 0,
+                .dst_offset = 0,
+                .size = res.input_buf.size,
+            }},
+        );
 
         // memory barrier to ensure write is complete before shader reads it
         self._device.cmdPipelineBarrier(
@@ -897,8 +914,8 @@ pub const Context = struct {
             .{ .transfer_bit = true },
             .{ .compute_shader_bit = true },
             .{},
-            0, null,
-            1, &.{.{
+            null,
+            &.{.{
                 .src_access_mask = .{ .transfer_write_bit = true },
                 .dst_access_mask = .{ .shader_read_bit = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
@@ -907,15 +924,15 @@ pub const Context = struct {
                 .offset = 0,
                 .size = vk.WHOLE_SIZE,
             }},
-            0, null
+            null,
         );
 
         self._device.cmdBindPipeline(res.cmd_buf, .compute, res.compute_pipeline);
 
         // upload uniforms as push constants
         const push = PushConstants{
-            .num_codepoints = self._num_codepoints,
-            .out_im_w = handle.out_im_w,
+            .num_glyphs = num_glyphs,
+            .grid_w = handle.grid_w,
             .dispatch_x = dispatch_x,
             .dispatch_y = dispatch_y,
             .dispatch_w = dispatch_w,
@@ -923,10 +940,10 @@ pub const Context = struct {
             .input_bpp = handle.pixel_format.bpp(),
             ._pad = 0,
             .swizzle = handle.pixel_format.swizzle(),
-            .input_cell_w = handle.src_cell_w,
-            .input_cell_h = handle.src_cell_h,
-            .patch_w = self._patch_w,
-            .patch_h = self._patch_h,
+            .im_patch_w = handle.im_patch_w,
+            .im_patch_h = handle.im_patch_h,
+            .cell_w = cell_w,
+            .cell_h = cell_h,
         };
 
         self._device.cmdPushConstants(
@@ -942,23 +959,22 @@ pub const Context = struct {
             res.cmd_buf,
             .compute,
             self._pipeline_layout,
-            0, 2, &.{ self._glyph_set_desc_set, res.buf_io_desc_set },
-            0, null
+            0,
+            &.{ self._glyph_set_desc_set, res.buf_io_desc_set },
+            null,
         );
 
-        // Dispatch compute- local_size_x = 64 in glsl
         const work_group_size: u32 = 64;
         const num_work_groups = try std.math.divCeil(u32, dispatch_w * dispatch_h, work_group_size);
         self._device.cmdDispatch(res.cmd_buf, num_work_groups, 1, 1);
 
-        // memory barrier to ensure compute is complete before readback to cpu
         self._device.cmdPipelineBarrier(
             res.cmd_buf,
             .{ .compute_shader_bit = true },
             .{ .transfer_bit = true },
             .{},
-            0, null,
-            1, &.{.{
+            null,
+            &.{.{
                 .src_access_mask = .{ .shader_write_bit = true },
                 .dst_access_mask = .{ .transfer_read_bit = true },
                 .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
@@ -967,55 +983,68 @@ pub const Context = struct {
                 .offset = 0,
                 .size = vk.WHOLE_SIZE,
             }},
-            0, null
+            null,
         );
 
-        // readback gpu - cpu
-        self._device.cmdCopyBuffer(res.cmd_buf, res.device_output_buf.buf, res.output_buf.buf, 1, &[_]vk.BufferCopy{
-            .{ .src_offset = 0, .dst_offset = 0, .size = res.output_buf.size }
-        });
+        self._device.cmdCopyBuffer(
+            res.cmd_buf,
+            res.device_output_buf.buf,
+            res.output_buf.buf,
+            &[_]vk.BufferCopy{.{ .src_offset = 0, .dst_offset = 0, .size = res.output_buf.size }},
+        );
 
         try self._device.endCommandBuffer(res.cmd_buf);
     }
 
     fn createComputePipeline(self: *@This(), res: *PipelineResources) !void {
-        // create shader module
-        const shader_code = @embedFile("shaders/bin/compute_pixel.spv");
+        const shader_code = @embedFile("compute_pixel_spv");
         const shader_module = try self._device.createShaderModule(&.{
             .code_size = shader_code.len,
             .p_code = @ptrCast(@alignCast(shader_code.ptr)),
         }, null);
+        // The compute pipeline retains everything it needs from the module, so
+        // the module can be destroyed as soon as pipeline creation returns.
+        defer self._device.destroyShaderModule(shader_module, null);
 
+        var pipelines: [1]vk.Pipeline = undefined;
         _ = try self._device.createComputePipelines(
-            .null_handle,  // pipeline cache TODO: make caching optional, save to ~/.cache
-            1, &[_]vk.ComputePipelineCreateInfo{.{
+            .null_handle, // pipeline cache TODO: make caching optional, save to ~/.cache
+            &[_]vk.ComputePipelineCreateInfo{.{
                 .stage = .{
                     .stage = .{ .compute_bit = true },
                     .module = shader_module,
-                    .p_name = "main",  // entry point
+                    .p_name = "main", // entry point
                 },
                 .layout = self._pipeline_layout,
-                .base_pipeline_index = 0
+                .base_pipeline_index = 0,
             }},
             null,
-            @ptrCast(&res.compute_pipeline),
+            &pipelines,
         );
+        res.compute_pipeline = pipelines[0];
     }
 
     fn mapCpuBuffersToHandle(
         self: *@This(),
         res: *PipelineResources,
         input_surface: *[*]u8,
-        output_surface: *[*]uni_im.UnicodePixelData
+        output_surface: *[*]UnicodePixelData,
     ) !void {
-        // map input
-        const input_raw: *anyopaque = try self._device.mapMemory(res.input_buf.mem, 0, res.input_buf.size, .{})
-            orelse return error.MapMemoryFailed;
+        const input_raw: *anyopaque = try self._device.mapMemory(
+            res.input_buf.mem,
+            0,
+            res.input_buf.size,
+            .{},
+        ) orelse return error.MapMemoryFailed;
+        errdefer self._device.unmapMemory(res.input_buf.mem);
         input_surface.* = @ptrCast(@alignCast(input_raw));
 
-        // map output
-        const output_raw: *anyopaque = try self._device.mapMemory(res.output_buf.mem, 0, res.output_buf.size, .{})
-            orelse return error.MapMemoryFailed;
+        const output_raw: *anyopaque = try self._device.mapMemory(
+            res.output_buf.mem,
+            0,
+            res.output_buf.size,
+            .{},
+        ) orelse return error.MapMemoryFailed;
         output_surface.* = @ptrCast(@alignCast(output_raw));
     }
 
@@ -1025,28 +1054,21 @@ pub const Context = struct {
     }
 
     fn destroyPipelineResources(self: *@This(), res: *PipelineResources) void {
-        // Unmap CPU buffers
         self._device.unmapMemory(res.input_buf.mem);
         self._device.unmapMemory(res.output_buf.mem);
 
-        // Destroy buffers
         self.destroyMemBuffer(res.input_buf);
         self.destroyMemBuffer(res.device_input_buf);
         self.destroyMemBuffer(res.device_output_buf);
         self.destroyMemBuffer(res.output_buf);
 
-        // Destroy pipeline and fence
         self._device.destroyPipeline(res.compute_pipeline, null);
         self._device.destroyFence(res.pipeline_complete, null);
-
-        // Note: descriptor sets and command buffers are pool-allocated,
-        // they get freed when the pools are destroyed in deinit()
     }
 };
 
-// Link Vulkan functions
+// Necessary to link Vulkan functions
 extern "vulkan" fn vkGetInstanceProcAddr(
     instance: vk.Instance,
     p_name: [*:0]const u8,
 ) vk.PfnVoidFunction;
-

@@ -1,13 +1,13 @@
 const std = @import("std");
 const posix = std.posix;
-const fs = std.fs;
+const Io = std.Io;
 const mem = std.mem;
 const fmt = std.fmt;
 const debug = std.debug;
 
-pub fn getCursorPos() !struct { row: u16, col: u16 } {
-    const stdin = fs.File.stdin();
-    const stdout = fs.File.stdout();
+pub fn getCursorPos(io: Io) !struct { row: u16, col: u16 } {
+    const stdin = Io.File.stdin();
+    const stdout = Io.File.stdout();
     
     // Save original termios and switch to raw mode
     const orig = try posix.tcgetattr(stdin.handle);
@@ -18,13 +18,13 @@ pub fn getCursorPos() !struct { row: u16, col: u16 } {
     defer posix.tcsetattr(stdin.handle, .FLUSH, orig) catch {};
 
     // Send DSR query
-    try stdout.writeAll("\x1b[6n");
+    try stdout.writeStreamingAll(io, "\x1b[6n");
 
     // Read response: \x1b[row;colR
     var buf: [32]u8 = undefined;
     var len: usize = 0;
     while (len < buf.len) {
-        const n = try stdin.read(buf[len .. len + 1]);
+        const n = try stdin.readStreaming(io, &.{buf[len .. len + 1]});
         if (n == 0) break;
         if (buf[len] == 'R') break;
         len += 1;
@@ -43,34 +43,42 @@ pub fn getCursorPos() !struct { row: u16, col: u16 } {
     return .{ .row = row-1, .col = col-1 }; // convert back to 0-indexed
 }
 
-pub fn getDims() struct { cols: u16, rows: u16, cell_w: u16, cell_h: u16 } {
+pub fn getDims() struct { grid_w: u16, grid_h: u16, term_cell_px_w: u16, term_cell_px_h: u16 } {
     var wsz: posix.winsize = undefined;
     const rc = posix.system.ioctl(posix.STDOUT_FILENO, posix.T.IOCGWINSZ, @intFromPtr(&wsz));
 
     if (rc != 0) {
         debug.print("Error: ioctl failed with code {}", .{rc});
-        return .{ .cols = 0, .rows = 0, .cell_w = 0, .cell_h = 0 };
+        return .{ .grid_w = 0, .grid_h = 0, .term_cell_px_w = 0, .term_cell_px_h = 0 };
     }
 
+    // Many terminals (and most SSH sessions) report a zero pixel size. Fall
+    // back to a typical 1:2 cell aspect ratio so callers deriving image
+    // dimensions from these values don't divide by zero.
+    const default_cell_px_w = 8;
+    const default_cell_px_h = 16;
+    const cell_px_w = if (wsz.xpixel == 0 or wsz.col == 0) default_cell_px_w else wsz.xpixel / wsz.col;
+    const cell_px_h = if (wsz.ypixel == 0 or wsz.row == 0) default_cell_px_h else wsz.ypixel / wsz.row;
+
     return .{
-        .cols = wsz.col,
-        .rows = wsz.row,
-        .cell_w = wsz.xpixel / wsz.col,
-        .cell_h = wsz.ypixel / wsz.row,
+        .grid_w = wsz.col,
+        .grid_h = wsz.row,
+        .term_cell_px_w = cell_px_w,
+        .term_cell_px_h = cell_px_h,
     };
 }
 
-pub fn reserveVerticalSpace(rows: u16) !void {
+pub fn reserveVerticalSpace(io: Io, rows: u16) !void {
     const MOVE_CURSOR_UP_TEMPLATE = "\x1b[{d}A";
-    const stdout = std.fs.File.stdout();
+    const stdout = std.Io.File.stdout();
 
     for (0..rows) |_| {
-        try stdout.writeAll("\n");
+        try stdout.writeStreamingAll(io, "\n");
     }
 
     var move_cursor_buf: [16]u8 = undefined;
     const move_cursor_up = try fmt.bufPrint(&move_cursor_buf, MOVE_CURSOR_UP_TEMPLATE, .{rows});
 
-    try stdout.writeAll(move_cursor_up);
+    try stdout.writeStreamingAll(io, move_cursor_up);
 }
 

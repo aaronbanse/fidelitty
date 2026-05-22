@@ -1,10 +1,3 @@
 /.zig-cache
 /zig-out
-*.o
-*.txt
-*.sh
-*.raw
-/scripts/__pycache__
-/scripts/checkpoints
-/scripts/data
-
+/zig-pkg

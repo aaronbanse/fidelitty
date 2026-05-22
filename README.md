@@ -1,39 +1,34 @@
 # Fidelitty
 
-### A library for high performance rendering in the terminal using unicode characters and escape sequences
+### A library for rendering images in the terminal
 
-This library uses Zig ```0.15.2```. Currently only Linux is supported. Available as a shared library with a C header.
-
-*Should* work on most modern terminals (kitty, foot, wezterm, contour, ghostty, iTerm2, alacritty, and more). I haven't tested on all, but the only requirements are support for truecolor and escape sequences for synced output.
-
-*Note that this code is in early development, so expect frequent and significant changes to the API and backend.*
+- Functions over ssh
+- Doubles as a form of image compression, enabling video to be transmitted efficiently
+- Can run at > 120fps with a lower resolution (2x4 pixels per terminal cell)
+- Compatible with all modern terminals supporting truecolor, font fallbacks, and escape sequences for coloring the foreground and background
+- Available as a Zig library or shared object with C header
 
 <p align="center">
-  <img src="examples/assets/example-output.png" width="600" alt="Terminal render example">
+  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's high-res render of 'Merfolk Trickster' by Jesper Ejsing">
 </p>
 
 <p align="center">
-  <img src="examples/assets/primeagen-high-res.png" width="600" alt="Carbonyl browser using fidelitty algo, watching youtube at 60 fps">
+  <em>Example render with resolution 3x5 per cell.</em>
 </p>
 
 <p align="center">
-  Watching the primeagen at 60fps using my fork of the carbonyl browser: <a href="https://github.com/aaronbanse/carbonyl-ftty">carbonyl-ftty</a>.
+  <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
 </p>
 
-#### Features
+<p align="center">
+  <em>The original image, one of my favorite works from Jesper Ejsing.</em>
+</p>
 
-- Deterministic algorithm to compress image patches to background/foreground-colored unicode characters
-- 60 fps (works on my machine)
-- Customize algorithm features, like the subset of unicode characters to use, at build time. The dataset will be computed and baked into the binary for performance.
+#### Dependencies
 
-#### Limitations
+Vulkan and fontconfig are the only dependencies. Zig `0.16` is needed to build from source.
 
-- Render quality relies on the unicode glyph dataset used matching the font set in your terminal. For now, manually set the font to generate the dataset from in ```build.zig```.
-- No way to attach to an existing Vulkan instance just yet, must create a standalone context and transfer data over the cpu.
-- The terminal frontend is experimental and buggy.
-
-#### Installation and building
-Install Zig `0.15.2` and Vulkan, and ensure proper graphics drivers are installed.
+#### Building from source
 
 Clone the repo:
 ```bash
@@ -41,67 +36,64 @@ git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
 
-Set your terminal font in `build.zig` (search for `FONT_PATH`), then generate the glyph dataset and build:
+To build and run the example (after completing setup, see below):
 ```bash
-zig build gen-dataset && zig build
+zig build example
 ```
 
-Run the example: *note: the example depends on stb_image, which is not safe for use on untrusted images. Use at your own risk until this is addressed.*
+To build and install:
 ```bash
-zig build run-img-ex
+zig build -Doptimize=ReleaseSmall --prefix /usr/local
+# -Doptimize=ReleaseFast is also an option, but the binary will be ~10x larger.
+# Furthermore, most of the latency is on the gpu, where that build setting does not help.
 ```
 
-To use as a Zig library, add fidelitty as a dependency in your `build.zig.zon`, or have Zig fetch it automatically:
+To use as a Zig library:
 ```bash
 # in project root
 zig fetch --save https://github.com/aaronbanse/fidelitty.git
 ```
+#### Setup
 
-To build as a `.so` file and install `libfidelitty.so` and `fidelitty.h` to `/usr/local`:
+Fidelitty uses a custom bitmask font for rendering which must match the terminal cell dims exactly. The dimensions of the terminal cell are determined by the user's default font. To generate the rendering font, run:
+
 ```bash
-zig build -Dbuild-mode=shared_lib --prefix /usr/local
+ftty-init <path_to_user_font>
+fc-cache -f
 ```
 
-And, in your `build.zig`, link the Vulkan library to your executable:
-```zig
-exe.linkSystemLibrary("vulkan");
-```
-
-
-It is not necessary to link libc in this way, as Zig supports transitive libc linking through included modules.
+Terminals cache available fonts on startup, so you must restart your terminal for the changes to be detected.
 
 #### Algorithm overview
 
 ##### Output Format
 
 While Kitty allows for high-resolution image rendering using their protocol, this tool attempts to provide a method for image rendering targeting a more wide range of terminals.
-Most modern terminals allow for setting the foreground and background colors of characters using escape sequences, and we use this as the foundation for the algorithm.
+Most modern terminals allow for setting the foreground (fg) and background (bg) colors of characters using escape sequences, and we use this as the foundation for the algorithm.
 
 While one can turn down the font size to the minimum in order to get a higher resolution image using the full-block character ```0x2588``` or a 2-colored half-block unicode character ```0x2580```, this makes the image renderer unusable alongside other text-based terminal apps. This defeats the purpose of integrated terminal graphics, as you would be better off just opening another window with a real graphics API. 
 
-Hence, we are restricted to rendering images without changing the font size. On my terminal with font size 10, I can fit ~9000 (160x51) characters ('pixels') on the screen. Using half-block characters with foreground and background color set, we can double the resolution to ~18000 (160x102) pixels. This isn't terrible, but we can do better.
+Hence, we are restricted to rendering images without changing the font size. On my terminal with font size 10, I can fit ~9000 (160x51) characters ('pixels') on the screen. Using half-block characters with fg and bg color set, we can double the resolution to ~18000 (160x102) pixels. This isn't terrible, but we can do better.
 
-While we can't increase our 'color resolution' (the number of distinct colored patches we can fit on the screen) past 18000 pixels, since we are limited to setting the foreground and background color for a given character, we *can* increase the 'shape resolution'.
+While we can't increase our 'color resolution' (the number of distinct colored patches we can fit on the screen) past 18000 pixels, since we are limited to setting the fg and bg color for a given character, we *can* increase the 'shape resolution'.
 
 ##### Patch Matching
 
-The main idea of this algorithm is to render our 'virtual' image to a higher resolution then the effective terminal resolution, say 640x320. This gives us a 4x4 patch of pixels for each character in the terminal window. We then assign a pair of colors and a character to each patch that best matches the patch visually.
+The main idea of this algorithm is divide the image into terminal-cell-sized patches, and assign a pair of colors and a unicode character to each patch that best matches the patch visually.
 
-But how? 
+*But how?*
 
-First we construct a metric to compare how well a unicode character matches a given 4x4 rgb patch. Given that we can color the foreground and background, a rendered unicode character serves as a partition of a terminal cell into two colors. In particular, the unicode glyphs are rendered with anti-aliasing, and we store them in a highly compressed 4x4 array of floats in the range [0,1]. We can also derive a mask of the *negative* space of a glyph by subtracting the array from an array of all 1's.
+Given that we can color the foreground and background, a rendered unicode character partitions the cell into two colors. If we quantize the cell with resolution $n \times m$, we can represent each side of the partition as a binarized vector of length $nm$. Given a unicode glyph $G$, let $F,B$ be the foreground and background mask vectors, respectively. Note that since $F$ and $B$ partition $G$, $F \cdot B = 0$.
 
-We store patches as flat vectors, since the position of pixels is only relevant for pointwise comparison. For comparison, we define a *Unicode Pixel* as foreground and background colors $C_f, C_b$, and foreground and background mask vectors $F, B$ with each $F_i,B_i \in [0,1]$. We define a *Image Patch* as a set of 3 vectors $P_r,P_g,P_b$.
+We sample the corresponding patch in the input image down to matching dimensions $n \times m$, yielding three vectors $P_r, P_g, P_b$ of length $nm$. 
 
-This algorithm considers each color channel individually, and so the remainder of this section will present the metric to compare the difference between the Unicode Pixel and the Image Patch *over one channel*, $P$.
-
-We will measure the difference $D$ using mean squared error (MSE):
+Let us consider one of these channels out of $P_r, P_g, P_b$, call it $P$. We want to find the values $c_f, c_b$, representing that channel of the fg and bg colors of the terminal cell, such that $P$ is as similar as possible to $c_fF + c_bB$. In other words, we want to find the fg and bg colors such that the rendered unicode character best matches the patch in that channel. We will use mean squared error as our difference metric, so we have:
 
 ```math
-D = \sum_i (P_i - c_fF_i - c_bB_i)^2
+D = \sum_i(P_i - c_fF_i - c_bB_i)^2
 ```
 
-Where $c_f, c_b$ are scalars, since we only consider one channel. For a given unicode character and patch, the glyph masks are fixed, so we want to find the values of $c_f$ and $c_b$ that minimize $D$. We find where the partial derivative of $c_f$ and $c_b$ are $0$:
+Where we seek to minimize $D$. To do so, we take the derivative w.r.t $c_f$ and $c_b$, yielding:
 
 ```math
 0 = \sum_i -2F_i(P_i - c_fF_i - c_bB_i)
@@ -109,41 +101,40 @@ Where $c_f, c_b$ are scalars, since we only consider one channel. For a given un
 ```math
 0 = \sum_i -2B_i(P_i - c_fF_i - c_bB_i)
 ```
+
+The sum of the pointwise product is the dot product, so:
+
 ```math
-0 = -F\cdot (P - c_fF - c_bB)
+0 = F \cdot (P - c_fF - c_bB)
 ```
 ```math
-0 = -B\cdot (P - c_fF - c_bB)
+0 = B \cdot (P - c_fF - c_bB)
 ```
 Then, some algebra:
 ```math
-P\cdot F = c_fF\cdot F + c_bF\cdot B
+c_fF\cdot F + c_bF\cdot B = P\cdot F
 ```
 ```math
-P\cdot B = c_fF\cdot B + c_bB\cdot B
+c_fF\cdot B + c_bB\cdot B = P\cdot B
 ```
 ```math
-\begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix} \begin{bmatrix} c_f \\ c_b \end{bmatrix} = \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix}
 ```
 ```math
-\begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix}^{-1} \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} c_f \\ c_b \end{bmatrix} = \begin{bmatrix} F\cdot F & F\cdot B \\ F\cdot B & B\cdot B \end{bmatrix}^{-1} \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix}
 ```
 ```math
-\frac{\begin{bmatrix} B\cdot B & -F\cdot B \\ -F\cdot B & F\cdot F \end{bmatrix}}{F\cdot F*B\cdot B - (F\cdot B)^2} \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix} = \begin{bmatrix} c_f \\ c_b \end{bmatrix}
+\begin{bmatrix} c_f \\ c_b \end{bmatrix} = \frac{\begin{bmatrix} B\cdot B & -F\cdot B \\ -F\cdot B & F\cdot F \end{bmatrix}}{F\cdot F*B\cdot B - (F\cdot B)^2} \begin{bmatrix} P\cdot F \\ P\cdot B \end{bmatrix}
 ```
 
-Finally, we have an equation for the optimal $c_f,c_b$. To see how good it is, we plug these values into the first equation for D. Now that we have this metric, finding the optimal unicode pixel is as simple as looping through the full list of characters, computing this value for each channel, and picking the character-color combo with the lowest $D$.
+Finally, we have an equation for the optimal $c_f,c_b$. To find the 'reconstruction error', we plug these values into the first equation for D. Now that we have this metric, finding the optimal unicode pixel is as simple as looping through the full list of characters, computing this value for each channel, and picking the character-color combo with the lowest $D$.
 
-##### Performance Optimizations
+#### Custom rendering font
 
-Since the set of characters used for rendering is fixed, we precompute $F\cdot F,B\cdot B,F\cdot B,$ and $F\cdot F*B\cdot B - (F\cdot B)^2$, and bake them into the binary.
+Given a set of unicode characters, increasing the resolution of the cell we compute the optimal fg and bg colors with yields diminishing returns. The number of unique partitions of the cell we can represent is limited to that set.
 
-The algorithm is entirely patch-local, so it is trivial to parallelize on the GPU. This library depends on Vulkan to handle compute shader dispatch, although I may switch over to a Zig-native solution, as there appear to be some good options providing more cross-platform support.
+To solve this, fidelitty defines a custom font, with codepoints occupying the Private Use Area (PUA) of the spectrum of values a codepoint can take. Unicode only uses values up through the max of an unsigned, 21-bit integer, leaving $2^{21}$ times more codepoints open for users to define. This allows us to create a font which will not conflict with any other fonts. When we tell the terminal to print a codepoint in that range, we can assume the glyph will be sourced from the fidelitty font, even if the user's default font is different, since the terminal will 'fallback' if the default font does not define that codepoint.
 
-### Data Sizing Conventions
+This custom font allows us to ensure all possible partitions of the cell are represented in the set. Given cell resolution $2 \times 4$, this is $2^8 = 256$ different glyphs; given resolution $3 \times 5$, this is $2^{15} = 32768$. Rendering at higher resolution demands exponentially larger glyph sets, and so exponentially more time to solve for each cell. However, since the inverse of each glyph is an equivalent partition, we can cut the size in half with no effect on correctness.
 
-- Pixel color: ```u8```
-- Unicode codepoints: ```u32```
-- Patch-space / patch dimensions: ```u8```
-- Image-space: ```u16```
-
+This set could be reduced further in the hopes that not all partitions are as important, allowing you to trade generally higher resolution for the occasional artifact when a patch doesn't have a good match. This is an area of open research, and would be helpful to allow us to render at higher resolution while maintaining a reasonable framerate. Currently, the only resolution yielding square-ish pixels that can easily run on my machine is $2 \times 4$. For standalone image renders, $3 \times 5$ is best.
