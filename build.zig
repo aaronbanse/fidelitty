@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     // Configuration
 
     const CELL_W = 3;
-    const CELL_H = 4;
+    const CELL_H = 5;
 
     // Fidelitty's glyphs occupy the Private Use Area of unicode codepoints.
     // PUA-B starts at 0x100000, so we start at 0x105000 to avoid collisions.
