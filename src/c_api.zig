@@ -14,6 +14,24 @@ const initFont = ftty.initFont;
 
 const c_allocator = std.heap.c_allocator;
 
+// FONT GENERATION
+
+/// Generate and install the fidelitty rendering font, derived from the user's
+/// font at `user_font_path`. Returns 0 on success, -1 on failure.
+export fn ftty_init_font(user_font_path: [*:0]const u8) callconv(.c) i32 {
+    const home = std.c.getenv("HOME") orelse return -1;
+    var threaded = std.Io.Threaded.init(c_allocator, .{});
+    defer threaded.deinit();
+    const installed_path = initFont(
+        threaded.io(),
+        c_allocator,
+        std.mem.span(user_font_path),
+        std.mem.span(home),
+    ) catch return -1;
+    c_allocator.free(installed_path);
+    return 0;
+}
+
 // CONTEXT MANAGEMENT
 
 export fn ftty_context_create(max_pipelines: u8) callconv(.c) ?*ComputeContext {

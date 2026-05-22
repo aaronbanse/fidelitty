@@ -21,6 +21,9 @@ typedef struct {
   uint32_t codepoint;
 } ftty_unicode_pixel_t;
 
+// Font generation
+int ftty_init_font(const char* user_font_path);
+
 // Context management
 ftty_context_t* ftty_context_create(uint8_t max_pipelines);
 void ftty_context_destroy(ftty_context_t* ctx);
