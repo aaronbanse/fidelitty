@@ -9,16 +9,26 @@
 
 <p align="center">
   <img src="examples/assets/merfolk-trickster-ftty-high.png" width="700" alt="Fidelitty's high-res render of 'Merfolk Trickster' by Jesper Ejsing">
+</p>
 
-  Example render with resolution 3x5 per cell.
+<p align="center">
+  <em>Example render with resolution 3x5 per cell.</em>
+</p>
 
+<p align="center">
   <img src="examples/assets/merfolk-trickster-ftty-low.png" width="700" alt="Fidelitty's low-res render of 'Merfolk Trickster' by Jesper Ejsing">
+</p>
 
-  Example render with resolution 2x4 per cell.
+<p align="center">
+  <em>Example render with resolution 2x4 per cell.</em>
+</p>
 
+<p align="center">
   <img src="examples/assets/merfolk-trickster.jpg" width="700" alt="'Merfolk Trickster' by Jesper Ejsing">
+</p>
 
-  The original image, one of my favorite works from Jesper Ejsing.
+<p align="center">
+  <em>The original image, one of my favorite works from Jesper Ejsing.</em>
 </p>
 
 #### Dependencies
