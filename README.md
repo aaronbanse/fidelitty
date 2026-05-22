@@ -9,19 +9,11 @@
 - Available as a Zig library or shared object with C header
 
 <p align="center">
-  <img src="examples/assets/merfolk-trickster-ftty-high.png" width="700" alt="Fidelitty's high-res render of 'Merfolk Trickster' by Jesper Ejsing">
+  <img src="examples/assets/merfolk-trickster-ftty.png" width="700" alt="Fidelitty's high-res render of 'Merfolk Trickster' by Jesper Ejsing">
 </p>
 
 <p align="center">
   <em>Example render with resolution 3x5 per cell.</em>
-</p>
-
-<p align="center">
-  <img src="examples/assets/merfolk-trickster-ftty-low.png" width="700" alt="Fidelitty's low-res render of 'Merfolk Trickster' by Jesper Ejsing">
-</p>
-
-<p align="center">
-  <em>Example render with resolution 2x4 per cell.</em>
 </p>
 
 <p align="center">
