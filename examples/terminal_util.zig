@@ -52,11 +52,19 @@ pub fn getDims() struct { grid_w: u16, grid_h: u16, term_cell_px_w: u16, term_ce
         return .{ .grid_w = 0, .grid_h = 0, .term_cell_px_w = 0, .term_cell_px_h = 0 };
     }
 
+    // Many terminals (and most SSH sessions) report a zero pixel size. Fall
+    // back to a typical 1:2 cell aspect ratio so callers deriving image
+    // dimensions from these values don't divide by zero.
+    const default_cell_px_w = 8;
+    const default_cell_px_h = 16;
+    const cell_px_w = if (wsz.xpixel == 0 or wsz.col == 0) default_cell_px_w else wsz.xpixel / wsz.col;
+    const cell_px_h = if (wsz.ypixel == 0 or wsz.row == 0) default_cell_px_h else wsz.ypixel / wsz.row;
+
     return .{
         .grid_w = wsz.col,
         .grid_h = wsz.row,
-        .term_cell_px_w = wsz.xpixel / wsz.col,
-        .term_cell_px_h = wsz.ypixel / wsz.row,
+        .term_cell_px_w = cell_px_w,
+        .term_cell_px_h = cell_px_h,
     };
 }
 

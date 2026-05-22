@@ -255,7 +255,9 @@ pub const Context = struct {
     pub fn waitRenderPipeline(self: @This(), handle: PipelineHandle) !void {
         const timeout: u64 = 1_000_000_000; // 1 second
         const res = self._pipelines.get(handle._id) orelse return error.InvalidPipelineHandle;
-        _ = try self._device.waitForFences(&.{res.pipeline_complete}, .true, timeout);
+        if (try self._device.waitForFences(&.{res.pipeline_complete}, .true, timeout) == .timeout) {
+            return error.RenderPipelineTimeout;
+        }
     }
 
     pub fn resizeRenderPipeline(self: *@This(), handle: *PipelineHandle, new_grid_w: u16, new_grid_h: u16) !void {
@@ -621,7 +623,9 @@ pub const Context = struct {
         }}, fence);
 
         const timeout: u64 = 100_000_000; // 100 milliseconds
-        _ = try self._device.waitForFences(&.{fence}, .true, timeout);
+        if (try self._device.waitForFences(&.{fence}, .true, timeout) == .timeout) {
+            return error.GlyphSetUploadTimeout;
+        }
     }
 
     fn allocateMemBuffer(

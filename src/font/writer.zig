@@ -44,7 +44,9 @@ pub fn writeFont(
     defer allocator.free(data);
 
     const home = try Io.Dir.cwd().openDir(io, user_home_dir, .{});
+    defer home.close(io);
     const font_dir = try home.createDirPathOpen(io, font_dir_from_home, .{});
+    defer font_dir.close(io);
     const font_file = try font_dir.createFile(io, font_name, .{});
     defer font_file.close(io);
     try font_file.writePositionalAll(io, data, 0);

@@ -13,18 +13,6 @@ const PixelFormat = ftty.PixelFormat;
 const initFont = ftty.initFont;
 
 const c_allocator = std.heap.c_allocator;
-const Threaded = std.Io.Threaded.init(c_allocator, .{});
-const c_io = Threaded.io();
-
-// FONT GENERATION
-
-// TODO: figure out how to get environ map without main's Init.
-// export fn ftty_init_font(user_font_path: [*]const u8) callconv(.c) i32 {
-//     ftty.initFont(c_io, c_allocator, user_font_path) catch {
-//         return -1;
-//     };
-//     return 0;
-// }
 
 // CONTEXT MANAGEMENT
 

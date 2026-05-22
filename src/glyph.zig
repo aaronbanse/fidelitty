@@ -27,16 +27,14 @@ pub const ColorEqnCache = extern struct {
         mask: GlyphMask(cell_w, cell_h),
     ) ColorEqnCache {
         const cell_size = cell_w * cell_h;
+        const bb = dot(cell_size, &mask.neg, &mask.neg);
+        const ff = dot(cell_size, &mask.pos, &mask.pos);
+        const bf = dot(cell_size, &mask.neg, &mask.pos);
         return .{
-            .BB = dot(cell_size, &mask.neg, &mask.neg),
-            .FF = dot(cell_size, &mask.pos, &mask.pos),
-            .BF = dot(cell_size, &mask.neg, &mask.pos),
-            // zig fmt: off
-            .det = dot(cell_size, &mask.neg, &mask.neg)
-                 * dot(cell_size, &mask.pos, &mask.pos)
-                 - dot(cell_size, &mask.neg, &mask.pos)
-                 * dot(cell_size, &mask.neg, &mask.pos),
-            // zig fmt: on
+            .BB = bb,
+            .FF = ff,
+            .BF = bf,
+            .det = ff * bb - bf * bf,
         };
     }
 };
@@ -86,7 +84,10 @@ pub fn UnicodeGlyphDataset(
         color_eqns: [n_glyphs]ColorEqnCache,
 
         pub fn init(self: *@This()) void {
-            @setEvalBranchQuota(n_glyphs * 1000);
+            // GlyphMask's f32 arrays are vec4-aligned, leaving struct padding
+            // the shader reads as the unused lane of a vec4. Zero it so that
+            // lane is defined without the shader having to scrub it per glyph.
+            @memset(std.mem.asBytes(self), 0);
             for (0..n_glyphs) |i| {
                 const bitmask = bitmasks[i];
                 self.codepoints[i] = @as(u32, @intCast(i)) + codepoint_start;

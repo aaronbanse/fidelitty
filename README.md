@@ -3,7 +3,7 @@
 ### A library for rendering images in the terminal
 
 - Functions over ssh
-- Doubles as a form of image compression, enabling video to be transmit efficiently
+- Doubles as a form of image compression, enabling video to be transmitted efficiently
 - Can run at > 120fps with a lower resolution (2x4 pixels per terminal cell)
 - Compatible with all modern terminals supporting truecolor, font fallbacks, and escape sequences for coloring the foreground and background
 - Available as a Zig library or shared object with C header
@@ -73,7 +73,7 @@ Most modern terminals allow for setting the foreground (fg) and background (bg) 
 
 While one can turn down the font size to the minimum in order to get a higher resolution image using the full-block character ```0x2588``` or a 2-colored half-block unicode character ```0x2580```, this makes the image renderer unusable alongside other text-based terminal apps. This defeats the purpose of integrated terminal graphics, as you would be better off just opening another window with a real graphics API. 
 
-Hence, we are restricted to rendering images without changing the font size. On my terminal with font size 10, I can fit ~9000 (160x51) characters ('pixels') on the screen. Using half-block characters with ff and bg color set, we can double the resolution to ~18000 (160x102) pixels. This isn't terrible, but we can do better.
+Hence, we are restricted to rendering images without changing the font size. On my terminal with font size 10, I can fit ~9000 (160x51) characters ('pixels') on the screen. Using half-block characters with fg and bg color set, we can double the resolution to ~18000 (160x102) pixels. This isn't terrible, but we can do better.
 
 While we can't increase our 'color resolution' (the number of distinct colored patches we can fit on the screen) past 18000 pixels, since we are limited to setting the fg and bg color for a given character, we *can* increase the 'shape resolution'.
 

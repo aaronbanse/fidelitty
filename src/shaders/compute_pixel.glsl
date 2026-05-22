@@ -167,9 +167,7 @@ void main() {
     uint best_i = 0;
     float best_mse = 10000000.0;
     for (uint i = 0; i < pc.num_codepoints; i++) {
-        zeroUnused(masks[i].neg);
-        zeroUnused(masks[i].pos);
-
+        // masks' unused vec4 lane is zeroed host-side, so no scrubbing here.
         float mse = 0;
         for (uint c = 0; c < 3; c++) {
             vec2 back_fore_opt = solveChannel(i, color_eqns[i], cell.rgb[c]);

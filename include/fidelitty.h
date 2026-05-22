@@ -11,8 +11,8 @@ typedef struct ftty_context_t ftty_context_t;
 typedef struct ftty_pipeline_t ftty_pipeline_t;
 
 typedef uint8_t ftty_pixel_format_t;
-#define FTTY_PIXEL_RGB ((ftty_pixel_format_t)0);
-#define FTTY_PIXEL_BGRA ((ftty_pixel_format_t)1);
+#define FTTY_PIXEL_RGB ((ftty_pixel_format_t)0)
+#define FTTY_PIXEL_BGRA ((ftty_pixel_format_t)1)
 
 typedef struct {
   uint8_t br, bg, bb;
