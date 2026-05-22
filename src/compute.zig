@@ -366,7 +366,9 @@ pub const Context = struct {
 
         const instance_handle = try self._vkb.createInstance(&.{
             .p_application_info = &.{
-                .api_version = @bitCast(vk.makeApiVersion(0, 1, 4, 328)),
+                // 8-bit storage buffers and shaderInt8 (the only non-1.0
+                // features used) are core in Vulkan 1.2, so that is the floor.
+                .api_version = @bitCast(vk.makeApiVersion(0, 1, 2, 0)),
                 // ignore =========
                 .engine_version = 0,
                 .application_version = 0,
@@ -746,17 +748,36 @@ pub const Context = struct {
         return null;
     }
 
+    // Ranks physical device types best-first so a real GPU is preferred over a
+    // software rasterizer (e.g. llvmpipe) when several devices are compute-capable.
+    fn deviceTypeRank(device_type: vk.PhysicalDeviceType) u8 {
+        return switch (device_type) {
+            .discrete_gpu => 4,
+            .integrated_gpu => 3,
+            .virtual_gpu => 2,
+            .cpu => 1,
+            else => 0,
+        };
+    }
+
     fn findComputeDevice(devices: []vk.PhysicalDevice, vki: *const vk.InstanceWrapper) ?ComputeDeviceIndices {
+        var best: ?ComputeDeviceIndices = null;
+        var best_rank: u8 = 0;
         for (devices, 0..) |dev, i| {
             var queue_family_count: u32 = undefined;
             var queue_families: [16]vk.QueueFamilyProperties = undefined;
             vki.getPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, null);
             vki.getPhysicalDeviceQueueFamilyProperties(dev, &queue_family_count, &queue_families);
 
-            const compute_queue_family = findComputeQueueFamily(queue_families[0..queue_family_count]);
-            if (compute_queue_family) |qf| return .{ .dev_index = @intCast(i), .queue_fam_index = qf };
+            const compute_queue_family = findComputeQueueFamily(queue_families[0..queue_family_count]) orelse continue;
+
+            const rank = deviceTypeRank(vki.getPhysicalDeviceProperties(dev).device_type);
+            if (best == null or rank > best_rank) {
+                best = .{ .dev_index = @intCast(i), .queue_fam_index = compute_queue_family };
+                best_rank = rank;
+            }
         }
-        return null;
+        return best;
     }
 
     fn findComputeQueueFamily(families: []vk.QueueFamilyProperties) ?u32 {

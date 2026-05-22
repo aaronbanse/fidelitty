@@ -65,7 +65,7 @@ fn generateFontData(allocator: mem.Allocator, metrics: FontMetrics) ![]const u8 
     const cmap = buildCmap();
 
     // glyf and loca are large, these must be heap-allocated
-    // to avoid stack overflow. (Woah he said the thing!)
+    // to avoid stack overflow.
     const glyf = try allocator.create(Glyf);
     defer allocator.destroy(glyf);
     const loca = try allocator.create(Loca);

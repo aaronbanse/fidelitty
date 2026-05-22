@@ -53,7 +53,9 @@ pub fn build(b: *std.Build) void {
             std.fmt.comptimePrint("-DVEC4_QUOTIENT={d}", .{VEC4_QUOTIENT}),
             std.fmt.comptimePrint("-DVEC4_REMAINDER={d}", .{VEC4_REMAINDER}),
             "-fshader-stage=compute",
-            "--target-env=vulkan1.4",
+            // Target the lowest Vulkan env that covers the shader's 8-bit
+            // storage usage so the SPIR-V also runs on 1.2-era devices.
+            "--target-env=vulkan1.2",
             "-o",
         });
         const spv = shader_cmd.addOutputFileArg("src/shaders/out/compute_pixel.spv");
