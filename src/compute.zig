@@ -110,11 +110,10 @@ pub const Context = struct {
 
     _glyph_set_desc_set: vk.DescriptorSet,
 
-    // TODO: heap allocate these to prevent pointers to stack vars
-    // Vulkan convenience wrappers
+    _allocator: std.mem.Allocator,
+
+    // Vulkan convenience wrappers.
     _vkb: vk.BaseWrapper,
-    _vki: vk.InstanceWrapper,
-    _vkd: vk.DeviceWrapper,
     _instance: vk.InstanceProxy,
     _device: vk.DeviceProxy,
     _queue: vk.Queue,
@@ -123,6 +122,7 @@ pub const Context = struct {
 
     /// Initialize a standalone vulkan context and setup machinery
     pub fn init(self: *@This(), allocator: std.mem.Allocator, max_pipelines: u8) !void {
+        self._allocator = allocator;
         self._pipelines = .init(allocator);
         self._max_pipelines = max_pipelines;
         self.loadBase();
@@ -157,6 +157,9 @@ pub const Context = struct {
 
         self._device.destroyDevice(null);
         self._instance.destroyInstance(null);
+
+        self._allocator.destroy(self._device.wrapper);
+        self._allocator.destroy(self._instance.wrapper);
     }
 
     fn computeInputSize(grid_w: u16, grid_h: u16, pixel_format: PixelFormat, im_patch_w: u8, im_patch_h: u8) usize {
@@ -343,8 +346,10 @@ pub const Context = struct {
                 // ================
             },
         }, null);
-        self._vki = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
-        self._instance = vk.InstanceProxy.init(instance_handle, &self._vki);
+        const vki = try self._allocator.create(vk.InstanceWrapper);
+        errdefer self._allocator.destroy(vki);
+        vki.* = vk.InstanceWrapper.load(instance_handle, self._vkb.dispatch.vkGetInstanceProcAddr.?);
+        self._instance = vk.InstanceProxy.init(instance_handle, vki);
     }
 
     const ComputeDeviceIndices = struct { dev_index: u32, queue_fam_index: u32 };
@@ -354,7 +359,7 @@ pub const Context = struct {
         var num_devices: u32 = undefined;
         var devices: [16]vk.PhysicalDevice = undefined;
         _ = try self._instance.enumeratePhysicalDevices(&num_devices, &devices);
-        const compute_device_found = findComputeDevice(devices[0..num_devices], &self._vki);
+        const compute_device_found = findComputeDevice(devices[0..num_devices], self._instance.wrapper);
         const compute_indices = compute_device_found orelse return error.NoComputeCapableDevice;
 
         self._physical_device = devices[compute_indices.dev_index];
@@ -366,7 +371,7 @@ pub const Context = struct {
             .storage_buffer_8_bit_access = .true,
             .shader_int_8 = .true,
         };
-        const device_handle = try self._vki.createDevice(self._physical_device, &.{
+        const device_handle = try self._instance.createDevice(self._physical_device, &.{
             .p_next = @ptrCast(&vk12_features),
             .queue_create_info_count = 1,
             .p_queue_create_infos = &[_]vk.DeviceQueueCreateInfo{.{
@@ -379,8 +384,10 @@ pub const Context = struct {
                 .shader_int_16 = .true,
             },
         }, null);
-        self._vkd = vk.DeviceWrapper.load(device_handle, self._vki.dispatch.vkGetDeviceProcAddr.?);
-        self._device = vk.DeviceProxy.init(device_handle, &self._vkd);
+        const vkd = try self._allocator.create(vk.DeviceWrapper);
+        errdefer self._allocator.destroy(vkd);
+        vkd.* = vk.DeviceWrapper.load(device_handle, self._instance.wrapper.dispatch.vkGetDeviceProcAddr.?);
+        self._device = vk.DeviceProxy.init(device_handle, vkd);
 
         return compute_indices;
     }
