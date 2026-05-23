@@ -139,6 +139,7 @@ This set could be reduced further in the hopes that not all partitions are as im
 
 #### Future work
 
+- CLI for rendering image / video data streams.
 - Shipping multiple precomputed glyph sets in one library build for runtime cell-dimension selection.
 - Context creation from an existing Vulkan instance, allowing passing render pipeline output directly to fidelitty on the gpu.
 - Double-buffered pipelines so the host can prep the next frame while the GPU works on the current one.
