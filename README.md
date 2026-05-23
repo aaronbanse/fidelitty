@@ -138,3 +138,12 @@ To solve this, fidelitty defines a custom font, with codepoints occupying the Pr
 This custom font allows us to ensure all possible partitions of the cell are represented in the set. Given cell resolution $2 \times 4$, this is $2^8 = 256$ different glyphs; given resolution $3 \times 5$, this is $2^{15} = 32768$. Rendering at higher resolution demands exponentially larger glyph sets, and so exponentially more time to solve for each cell. However, since the inverse of each glyph is an equivalent partition, we can cut the size in half with no effect on correctness.
 
 This set could be reduced further in the hopes that not all partitions are as important, allowing you to trade generally higher resolution for the occasional artifact when a patch doesn't have a good match. This is an area of open research, and would be helpful to allow us to render at higher resolution while maintaining a reasonable framerate. Currently, the only resolution yielding square-ish pixels that can easily run on my machine is $2 \times 4$. For standalone image renders, $3 \times 5$ is best.
+
+#### Future work
+
+- Shipping multiple precomputed glyph sets in one library build for runtime cell-dimension selection.
+- Context creation from an existing Vulkan instance, allowing passing render pipeline output directly to fidelitty on the gpu.
+- Double-buffered pipelines so the host can prep the next frame while the GPU works on the current one.
+- macOS support.
+- CFF / `.otf` source font support.
+- Improved performance at higher resolutions, open area of research.
