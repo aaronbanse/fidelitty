@@ -36,11 +36,6 @@ git clone https://github.com/aaronbanse/fidelitty.git
 cd fidelitty
 ```
 
-To build and run the example (after completing setup, see below):
-```bash
-zig build example
-```
-
 To build and install:
 ```bash
 zig build -Doptimize=ReleaseSmall --prefix /usr/local
@@ -58,11 +53,14 @@ zig fetch --save https://github.com/aaronbanse/fidelitty.git
 Fidelitty uses a custom bitmask font for rendering which must match the terminal cell dims exactly. The dimensions of the terminal cell are determined by the user's default font. To generate the rendering font, run:
 
 ```bash
-ftty-init <path_to_user_font>
+ftty init <path_to_user_font>
 fc-cache -f
 ```
 
-Terminals cache available fonts on startup, so you must restart your terminal for the changes to be detected.
+Terminals cache available fonts on startup, so you must restart your terminal for the changes to be detected. Then, you can try rendering some images:
+```bash
+ftty view path/to/image.{png,jpg,...}
+```
 
 #### Algorithm derivation
 

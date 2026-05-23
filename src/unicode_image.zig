@@ -1,6 +1,6 @@
-//! Experimental terminal frontend: a ready-to-print grid of colored unicode
-//! characters. Lives in examples/ rather than the library — most applications
-//! will feed the pipeline's output into their own rendering instead.
+//! Terminal frontend: a ready-to-print grid of colored unicode characters
+//! built from pipeline output. Applications that already have their own
+//! rendering path can skip this and consume `UnicodePixelData` directly.
 
 const std = @import("std");
 const mem = std.mem;
@@ -8,7 +8,7 @@ const fmt = std.fmt;
 const unicode = std.unicode;
 const Io = std.Io;
 
-const UnicodePixelData = @import("fidelitty").UnicodePixelData;
+const UnicodePixelData = @import("compute.zig").UnicodePixelData;
 
 // escape sequence to set the background color and foreground color for future printed characters,
 // plus four null bytes of space reserved for a single unicode character.

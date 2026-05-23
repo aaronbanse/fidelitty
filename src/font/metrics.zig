@@ -3,7 +3,7 @@
 const std = @import("std");
 const Io = std.Io;
 
-const c = @import("c");
+const c = @import("font_c");
 
 /// Metrics needed from the user font to properly size fidelitty font to fill each terminal cell.
 /// The fidelitty font's metrics may differ.

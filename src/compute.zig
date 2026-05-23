@@ -389,8 +389,8 @@ pub const Context = struct {
 
     fn createDevice(self: *@This()) !ComputeDeviceIndices {
         // find compute-capable device
-        var num_devices: u32 = undefined;
         var devices: [16]vk.PhysicalDevice = undefined;
+        var num_devices: u32 = devices.len;
         _ = try self._instance.enumeratePhysicalDevices(&num_devices, &devices);
         const compute_device_found = findComputeDevice(devices[0..num_devices], self._instance.wrapper);
         const compute_indices = compute_device_found orelse return error.NoComputeCapableDevice;

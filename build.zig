@@ -27,13 +27,21 @@ pub fn build(b: *std.Build) void {
 
     // Build root module
 
-    const c = b.addTranslateC(.{
-        .root_source_file = b.path("src/c.h"),
+    const font_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/font_c.h"),
         .link_libc = true,
         .target = target,
         .optimize = optimize,
     });
-    c.addIncludePath(b.path("src"));
+    font_c.addIncludePath(b.path("src"));
+
+    const view_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/view_c.h"),
+        .link_libc = true,
+        .target = target,
+        .optimize = optimize,
+    });
+    view_c.addIncludePath(b.path("src"));
 
     const vulkan = b.dependency("vulkan_zig", .{
         .registry = b.path("vk.xml"),
@@ -68,7 +76,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "dataset_config", .module = dataset_config.createModule() },
             .{ .name = "font_config", .module = font_config.createModule() },
-            .{ .name = "c", .module = c.createModule() },
+            .{ .name = "font_c", .module = font_c.createModule() },
             .{ .name = "vulkan", .module = vulkan.module("vulkan-zig") },
             .{
                 .name = "compute_pixel_spv",
@@ -103,35 +111,19 @@ pub fn build(b: *std.Build) void {
     // Build main executable
 
     const main_exe = b.addExecutable(.{
-        .name = "ftty-init",
+        .name = "ftty",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
-            .imports = &.{ .{ .name = "fidelitty", .module = root_module } },
+            .imports = &.{
+                .{ .name = "fidelitty", .module = root_module },
+                .{ .name = "view_c", .module = view_c.createModule() },
+            },
             .target = target,
             .optimize = optimize,
         }),
+    });
+    main_exe.root_module.addCSourceFile(.{
+        .file = b.path("src/ext/stb_image_impl.c"),
     });
     b.installArtifact(main_exe);
-
-    // Build and run example
-
-    const example_exe = b.addExecutable(.{
-        .name = "img-example",
-        .root_module = b.createModule(.{
-            .optimize = optimize,
-            .target = target,
-            .root_source_file = b.path("examples/render_image.zig"),
-            .imports = &.{ .{ .name = "fidelitty", .module = root_module } },
-        }),
-    });
-
-    example_exe.root_module.addIncludePath(b.path("examples/"));
-    example_exe.root_module.addCSourceFile(.{
-        .file = b.path("examples/stb_image_impl.c"),
-    });
-
-    const run_exe = b.addRunArtifact(example_exe);
-    if (b.args) |args| run_exe.addArgs(args);
-    const example_step = b.step("example", "Build and run the example");
-    example_step.dependOn(&run_exe.step);
 }

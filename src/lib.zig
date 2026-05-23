@@ -40,5 +40,11 @@ pub const PipelineHandle = compute.PipelineHandle;
 /// Pixel format for input surfaces
 pub const PixelFormat = compute.PixelFormat;
 
+/// Terminal queries (size, cursor position, reserving vertical space).
+pub const terminal = @import("terminal.zig");
+
+/// Ready-to-print grid of colored unicode characters built from pipeline output.
+pub const UnicodeImage = @import("unicode_image.zig").UnicodeImage;
+
 // In the future, I will add support for attaching the context to an existing Vulkan instance,
 // allowing this library to be used a postprocessing step with data passed directly through the gpu.
