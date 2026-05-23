@@ -64,9 +64,9 @@ fc-cache -f
 
 Terminals cache available fonts on startup, so you must restart your terminal for the changes to be detected.
 
-#### Algorithm overview
+#### Algorithm derivation
 
-##### Output Format
+##### Output format
 
 While Kitty allows for high-resolution image rendering using their protocol, this tool attempts to provide a method for image rendering targeting a more wide range of terminals.
 Most modern terminals allow for setting the foreground (fg) and background (bg) colors of characters using escape sequences, and we use this as the foundation for the algorithm.
@@ -77,7 +77,7 @@ Hence, we are restricted to rendering images without changing the font size. On 
 
 While we can't increase our 'color resolution' (the number of distinct colored patches we can fit on the screen) past 18000 pixels, since we are limited to setting the fg and bg color for a given character, we *can* increase the 'shape resolution'.
 
-##### Patch Matching
+##### Patch matching
 
 The main idea of this algorithm is divide the image into terminal-cell-sized patches, and assign a pair of colors and a unicode character to each patch that best matches the patch visually.
 
