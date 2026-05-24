@@ -70,13 +70,22 @@ fn cmdView(
     try compute_context.init(allocator, 8);
     defer compute_context.deinit();
 
-    // Pick grid dims that match the terminal height and preserve aspect ratio.
+    // Pick the largest cell grid that preserves the image's aspect ratio and
+    // fits within the terminal's grid bounds.
     const term_dims = ftty.terminal.getDims();
-    const grid_h: u16 = term_dims.grid_h;
-    const aspect: f32 = @as(f32, @floatFromInt(img_w)) / @as(f32, @floatFromInt(img_h));
-    const term_h_px: f32 = @floatFromInt(term_dims.grid_h * term_dims.term_cell_px_h);
+    const img_w_f: f32 = @floatFromInt(img_w);
+    const img_h_f: f32 = @floatFromInt(img_h);
     const cell_w_px: f32 = @floatFromInt(term_dims.term_cell_px_w);
-    const grid_w: u16 = @intFromFloat(term_h_px * aspect / cell_w_px);
+    const cell_h_px: f32 = @floatFromInt(term_dims.term_cell_px_h);
+    // grid_w/grid_h ratio that matches img_w/img_h once cells are stretched
+    // to their non-square pixel footprint.
+    const ratio: f32 = (img_w_f / img_h_f) * (cell_h_px / cell_w_px);
+    const term_grid_w_f: f32 = @floatFromInt(term_dims.grid_w);
+    const term_grid_h_f: f32 = @floatFromInt(term_dims.grid_h);
+    const grid_w: u16, const grid_h: u16 = if (term_grid_h_f * ratio <= term_grid_w_f)
+        .{ @intFromFloat(term_grid_h_f * ratio), term_dims.grid_h }
+    else
+        .{ term_dims.grid_w, @intFromFloat(term_grid_w_f / ratio) };
     var pipeline_handle = try compute_context.createRenderPipeline(grid_w, grid_h);
 
     // Nearest-neighbor sample the image into the pipeline's input surface.
