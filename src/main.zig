@@ -16,6 +16,7 @@ fn cmdInit(
 
     if (args.len != 3) {
         try stderr.writeAll("usage: ftty init <path_to_user_font>\n");
+        try stderr.flush();
         std.process.exit(1);
     }
 
@@ -45,6 +46,7 @@ fn cmdView(
 
     if (args.len != 3) {
         try stderr.writeAll("usage: ftty view <path_to_image>\n");
+        try stderr.flush();
         std.process.exit(1);
     }
     const image_path = args[2];
@@ -60,8 +62,7 @@ fn cmdView(
         3,
     );
     const image_bytes = image_raw orelse {
-        try stderr.print("failed to load image: {s}\n", .{image_path});
-        try stderr.flush();
+        std.log.err("failed to load image: {s}\n", .{image_path});
         std.process.exit(1);
     };
     defer c.stbi_image_free(image_bytes);
@@ -135,6 +136,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) {
         try stderr.writeAll(usage_str);
+        try stderr.flush();
         std.process.exit(1);
     }
     if (std.mem.eql(u8, args[1], "init")) {
@@ -147,6 +149,7 @@ pub fn main(init: std.process.Init) !void {
         try cmdView(io, arena, args);
     } else {
         try stderr.writeAll(usage_str);
+        try stderr.flush();
         std.process.exit(1);
     }
 }
